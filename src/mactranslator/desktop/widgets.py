@@ -6,6 +6,45 @@ from markdown_it import MarkdownIt
 from .native import bind
 
 
+def install_edit_menu():
+    """Accessory apps still need a main menu for native text editing shortcuts."""
+    menu = A.NSMenu.alloc().init()
+    app_item = A.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Translation", None, "")
+    app_menu = A.NSMenu.alloc().initWithTitle_("Translation")
+    app_menu.addItemWithTitle_action_keyEquivalent_("Quit Translator", "terminate:", "q")
+    app_item.setSubmenu_(app_menu)
+    menu.addItem_(app_item)
+    edit_item = A.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("Edit", None, "")
+    edit = A.NSMenu.alloc().initWithTitle_("Edit")
+    for title, action, key in (("Undo", "undo:", "z"), ("Redo", "redo:", "Z"),
+                               ("Cut", "cut:", "x"), ("Copy", "copy:", "c"),
+                               ("Paste", "paste:", "v"), ("Select All", "selectAll:", "a")):
+        item = edit.addItemWithTitle_action_keyEquivalent_(title, action, key.lower())
+        item.setKeyEquivalentModifierMask_(A.NSEventModifierFlagCommand |
+                                            (A.NSEventModifierFlagShift if key.isupper() else 0))
+    edit_item.setSubmenu_(edit)
+    menu.addItem_(edit_item)
+    A.NSApp.setMainMenu_(menu)
+
+
+def symbol(name, description):
+    image = A.NSImage.imageWithSystemSymbolName_accessibilityDescription_(name, description)
+    if image:
+        image.setTemplate_(True)
+    return image
+
+
+def symbol_button(parent, name, title, x, y, callback, targets):
+    view = button(parent, title, x, y, 36, callback, targets)
+    image = symbol(name, title)
+    if image:
+        view.setImage_(image)
+        view.setImagePosition_(A.NSImageOnly)
+    view.setToolTip_(title)
+    view.setAccessibilityLabel_(title)
+    return view
+
+
 def label(parent, text, x, y, w=200, h=24):
     view = A.NSTextField.labelWithString_(text)
     view.setFrame_(A.NSMakeRect(x, y, w, h))
@@ -16,6 +55,7 @@ def label(parent, text, x, y, w=200, h=24):
 def field(parent, x, y, w, value="", secure=False):
     cls = A.NSSecureTextField if secure else A.NSTextField
     view = cls.alloc().initWithFrame_(A.NSMakeRect(x, y, w, 26))
+    view.setBezelStyle_(A.NSTextFieldRoundedBezel)
     view.setStringValue_(value)
     parent.addSubview_(view)
     return view
@@ -114,12 +154,24 @@ def attributed_markdown(source):
         elif kind == "tr_close" and table is not None:
             table.append(row)
         elif kind == "table_close":
-            widths = [max(display_width(r[i]) if i < len(r) else 0 for r in table)
-                      for i in range(max(map(len, table), default=0))]
-            for i, r in enumerate(table):
-                append(" | ".join(cell + " " * (widths[j] - display_width(cell)) for j, cell in enumerate(r)) + "\n", mono)
-                if i == 0:
-                    append("-+-".join("-" * width for width in widths) + "\n", mono)
+            native_table = A.NSTextTable.alloc().init()
+            native_table.setNumberOfColumns_(max(map(len, table), default=1))
+            native_table.setLayoutAlgorithm_(A.NSTextTableAutomaticLayoutAlgorithm)
+            native_table.setCollapsesBorders_(True)
+            native_table.setContentWidth_type_(100, A.NSTextBlockPercentageValueType)
+            for i, row in enumerate(table):
+                for j, cell in enumerate(row):
+                    block = A.NSTextTableBlock.alloc().initWithTable_startingRow_rowSpan_startingColumn_columnSpan_(
+                        native_table, i, 1, j, 1)
+                    block.setWidth_type_forLayer_(0.5, A.NSTextBlockAbsoluteValueType, A.NSTextBlockBorder)
+                    block.setWidth_type_forLayer_(6, A.NSTextBlockAbsoluteValueType, A.NSTextBlockPadding)
+                    block.setBorderColor_(A.NSColor.separatorColor())
+                    block.setBackgroundColor_(A.NSColor.labelColor().colorWithAlphaComponent_(0.07 if i == 0 else 0.015))
+                    style = A.NSMutableParagraphStyle.alloc().init()
+                    style.setTextBlocks_([block])
+                    attrs = dict(bold if i == 0 else base)
+                    attrs[A.NSParagraphStyleAttributeName] = style
+                    append(cell + "\n", attrs)
             table = None
             append("\n")
         elif kind in ("fence", "code_block"):

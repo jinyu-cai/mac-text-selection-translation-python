@@ -48,8 +48,12 @@ def parameters(model: str, reasoning: str) -> dict:
     if inline_model(model):
         return {"temperature": 0.7, "top_p": 0.6}
     name = normalized_model(model)
-    temperature = not (name.startswith("gpt-5") or re.match(r"o\d", name))
+    temperature = not (name.startswith(("gpt-5", "gpt-6")) or re.match(r"o\d", name))
     if any(name == f"gpt-5.{n}" or name.startswith(f"gpt-5.{n}-") for n in (1, 2, 4, 5, 6)):
+        temperature = reasoning == "off"
+    # GPT-6 Sol/Luna permit sampling parameters only with reasoning disabled.
+    # Auto leaves effort unset, so do not assume the model default is "none".
+    if name.startswith(("gpt-6-sol", "gpt-6-luna")):
         temperature = reasoning == "off"
     result = {"temperature": 0.2} if temperature else {}
     if reasoning != "auto":

@@ -22,20 +22,20 @@ class NotesWindow:
         self.writes = {}
         self.generations = {}
         self.loading = False
-        self.window = W.window("本地笔记 · Python", 760, 620)
+        self.window = W.window("Notes", 760, 620)
         root = self.window.contentView()
         self.selection = W.choice(root, [], 18, 565, 570, lambda _: self.select(), self.targets)
-        W.button(root, "刷新", 610, 565, 126, lambda _: self.refresh(), self.targets)
+        W.button(root, "Refresh", 610, 565, 126, lambda _: self.refresh(), self.targets)
         self.content, _ = W.text_area(root, 18, 260, 718, 293)
-        W.label(root, "备注（自动保存）", 18, 229, 400)
+        W.label(root, "Notes (autosaved)", 18, 229, 400)
         self.editor, _ = W.text_area(root, 18, 69, 718, 156, editable=True)
         self.observer = NoteObserver.alloc().init()
         self.observer.owner = self
         self.editor.setDelegate_(self.observer)
         self.status = W.label(root, "", 18, 15, 370, 28)
-        W.button(root, "复制", 403, 15, 90, lambda _: self.copy(), self.targets)
-        W.button(root, "保存备注", 506, 15, 110, lambda _: self.flush(), self.targets)
-        W.button(root, "删除", 630, 15, 105, lambda _: self.delete(), self.targets)
+        W.button(root, "Copy", 403, 15, 90, lambda _: self.copy(), self.targets)
+        W.button(root, "Save Notes", 506, 15, 110, lambda _: self.flush(), self.targets)
+        W.button(root, "Delete", 630, 15, 105, lambda _: self.delete(), self.targets)
 
     def show(self):
         self.refresh()
@@ -67,14 +67,14 @@ class NotesWindow:
         self.loading = True
         if not 0 <= index < len(self.notes):
             self.current = None
-            self.content.setString_("还没有笔记。在翻译浮窗中点击「保存笔记」。")
+            self.content.setString_("No notes yet. Click Save Note in a translation window to add one.")
             self.editor.setString_("")
             self.editor.setEditable_(False)
         else:
             note = self.notes[index]
             self.current = note["id"]
             self.content.textStorage().setAttributedString_(W.attributed_markdown(
-                f"### 原文\n{note['source_text']}\n\n### {note.get('backend_name') or '译文'}\n"
+                f"### Source\n{note['source_text']}\n\n### {note.get('backend_name') or 'Translation'}\n"
                 f"{note.get('translated_text') or ''}"))
             self.editor.setString_(note["user_note"])
             self.editor.setEditable_(True)
@@ -90,7 +90,7 @@ class NotesWindow:
                 note["user_note"] = self.pending[note_id]
         self.generations[note_id] = self.generations.get(note_id, 0) + 1
         generation = self.generations[note_id]
-        self.status.setStringValue_("尚未保存…")
+        self.status.setStringValue_("Unsaved changes…")
         AppHelper.callLater(0.5, lambda: self.flush() if self.generations.get(note_id) == generation else None)
 
     def flush(self):
@@ -113,11 +113,11 @@ class NotesWindow:
                             note["user_note"] = old["user_note"]
                         self.notes[i] = note
                 if self.generations.get(note["id"], 0) == generation:
-                    self.status.setStringValue_("已保存")
+                    self.status.setStringValue_("Saved")
 
             def failed(exc, note_id=note_id, text=text):
                 self.pending.setdefault(note_id, text)
-                self.status.setStringValue_("保存失败：" + str(exc))
+                self.status.setStringValue_("Save failed: " + str(exc))
 
             self.writes[note_id] = self.app.run(save(), done=done, error=failed, during_quit=True)
             self.pending.pop(note_id, None)

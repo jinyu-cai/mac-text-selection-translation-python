@@ -44,4 +44,4 @@ def test_older_note_save_response_preserves_newer_local_edit(monkeypatch):
     completions[0]({"id": "note-id", "user_note": "first edit"})
     assert notes.notes[0]["user_note"] == text[0]
     assert notes.pending["note-id"] == text[0]
-    assert status[-1] != "已保存"
+    assert status[-1] != "Saved"

@@ -53,7 +53,7 @@ class BackendRuntime:
                 for _ in range(200):
                     if task.done():
                         await task
-                        raise RuntimeError("本地服务启动失败。")
+                        raise RuntimeError("The local service could not start.")
                     if self.server.started:
                         response = await client.get("/api/v1/health")
                         response.raise_for_status()
@@ -61,7 +61,7 @@ class BackendRuntime:
                         break
                     await asyncio.sleep(0.05)
                 else:
-                    raise RuntimeError("本地服务启动超时。")
+                    raise RuntimeError("The local service took too long to start.")
                 await task
         finally:
             self.server.should_exit = True
@@ -73,14 +73,14 @@ class BackendRuntime:
     def submit(self, coroutine):
         if not self.loop or not self.loop.is_running():
             coroutine.close()
-            raise RuntimeError("本地服务尚未就绪。")
+            raise RuntimeError("The local service is not ready yet.")
         return asyncio.run_coroutine_threadsafe(coroutine, self.loop)
 
     async def request(self, method, path, **kwargs):
         response = await self.client.request(method, "/api/v1" + path, **kwargs)
         if response.is_error:
             try:
-                detail = response.json().get("detail", "请求失败")
+                detail = response.json().get("detail", "Request failed")
             except ValueError:
                 detail = f"HTTP {response.status_code}"
             raise RuntimeError(str(detail))
@@ -93,14 +93,14 @@ class BackendRuntime:
         async with self.client.stream("POST", "/api/v1/translate", json=body) as response:
             if response.is_error:
                 await response.aread()
-                raise RuntimeError(response.json().get("detail", "翻译失败"))
+                raise RuntimeError(response.json().get("detail", "Translation failed"))
             async for value in sse_data(response.aiter_lines()):
                 callback(json.loads(value))
 
     async def speech(self, body):
         response = await self.client.post("/api/v1/speech", json=body)
         if response.is_error:
-            raise RuntimeError(response.json().get("detail", "朗读失败"))
+            raise RuntimeError(response.json().get("detail", "Speech failed"))
         return response.content
 
     def stop(self):

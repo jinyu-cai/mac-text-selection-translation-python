@@ -58,7 +58,7 @@ class OCRCapture:
 
     def choose(self):
         if not Q.CGPreflightScreenCaptureAccess() and not Q.CGRequestScreenCaptureAccess():
-            raise RuntimeError("请在系统设置 → 隐私与安全性 → 屏幕录制中允许此应用，然后重启。")
+            raise RuntimeError("Allow this app in System Settings → Privacy & Security → Screen Recording, then restart it.")
         self.selection_future = concurrent.futures.Future()
         for screen in A.NSScreen.screens():
             window = SelectionWindow.alloc().initWithContentRect_styleMask_backing_defer_(
@@ -99,7 +99,7 @@ class OCRCapture:
 
     async def capture(self):
         if self.busy:
-            raise RuntimeError("已有一次截图 OCR 正在进行。")
+            raise RuntimeError("A screenshot capture is already in progress.")
         self.busy = True
         try:
             selection = await on_main(self.choose)
@@ -124,7 +124,7 @@ class OCRCapture:
                     if error:
                         future.set_exception(RuntimeError(str(error.localizedDescription())))
                     elif value is None:
-                        future.set_exception(RuntimeError("没有截取到屏幕图像。"))
+                        future.set_exception(RuntimeError("No screenshot was captured."))
                     else:
                         future.set_result(value)
                 loop.call_soon_threadsafe(finish)
@@ -137,7 +137,7 @@ class OCRCapture:
                                             False, True, cb))
         display = next((d for d in content.displays() if d.displayID() == display_id), None)
         if display is None:
-            raise RuntimeError("所选显示器已断开。")
+            raise RuntimeError("The selected display was disconnected.")
         own = [w for w in content.windows() if w.owningApplication() and
                w.owningApplication().processID() == NSProcessInfo.processInfo().processIdentifier()]
         content_filter = SC.SCContentFilter.alloc().initWithDisplay_excludingWindows_(display, own)
@@ -167,7 +167,7 @@ class OCRCapture:
         handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(image, NSDictionary.dictionary())
         ok, error = handler.performRequests_error_([request], None)
         if not ok:
-            raise RuntimeError(str(error.localizedDescription()) if error else "OCR 识别失败。")
+            raise RuntimeError(str(error.localizedDescription()) if error else "Text recognition failed.")
         observations = []
         for observation in request.results() or []:
             candidates = observation.topCandidates_(1)
@@ -184,5 +184,5 @@ class OCRCapture:
                 rows.append([observation])
         text = "\n".join(item[2] for row in rows for item in sorted(row, key=lambda item: item[1])).strip()
         if not text:
-            raise RuntimeError("没有识别到文字。")
+            raise RuntimeError("No text was recognized.")
         return text

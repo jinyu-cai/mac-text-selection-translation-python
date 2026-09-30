@@ -234,3 +234,29 @@ async def test_disconnect_cancels_upstream(tmp_path, credentials):
                                                           (b"content-type", b"application/json")]}
         await asyncio.wait_for(app(scope, receive, send), 5)
         await asyncio.wait_for(closed.wait(), 1)
+
+
+@pytest.mark.parametrize("kind", ["gemini_cli", "antigravity_cli", "codex_cli"])
+def test_gemini_cli_stream_and_test_skip_keychain(tmp_path, credentials, monkeypatch, kind):
+    from mactranslator.backend import gemini_cli, antigravity_cli, codex_cli
+    from mactranslator.presets import gemini_cli_provider
+
+    async def fake_translate(p, prompt, text):
+        assert p.kind == kind
+        assert prompt
+        yield '你好'
+
+    def inaccessible(account):
+        raise AssertionError('CLI must not access the app API key')
+
+    monkeypatch.setattr(codex_cli if kind == 'codex_cli' else antigravity_cli if kind == 'antigravity_cli' else gemini_cli, 'translate', fake_translate)
+    credentials.get = inaccessible
+    p = gemini_cli_provider().model_dump(mode='json')
+    p['kind'] = kind
+    with client(tmp_path, credentials) as c:
+        save(c, [p])
+        assert c.post(f"/api/v1/providers/{p['id']}/test").json() == {'ok': True}
+        result = events(c.post('/api/v1/translate', json={'text': 'Hello'}))
+        assert [e['type'] for e in result] == ['start', 'delta', 'provider_done', 'done']
+        assert result[0]['providers'][0]['kind'] == kind
+        assert result[1]['text'] == '你好'

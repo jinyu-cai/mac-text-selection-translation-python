@@ -11,6 +11,9 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from mactranslator.contracts import Note, NoteCreate, NoteUpdate, Settings, SpeechRequest, StreamEvent, TranslationRequest
 from mactranslator.policies import system_prompt
+from mactranslator.contracts import AntigravityLogin, AntigravityCode, CodexLogin
+from .antigravity_account import AccountSession
+from .codex_account import AccountSession as CodexAccountSession
 from .credentials import CredentialError, KeychainCredentials
 from .providers import ProviderClient, public_error
 from .storage import Store, data_directory
@@ -23,6 +26,10 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
 
     @asynccontextmanager
     async def lifespan(app):
+        app.state.antigravity_install_lock = asyncio.Lock()
+        app.state.antigravity_account = AccountSession()
+        app.state.codex_account = CodexAccountSession()
+        app.state.codex_install_lock = asyncio.Lock()
         app.state.store = Store(database or data_directory() / "translator.sqlite3")
         try:
             async with httpx.AsyncClient(transport=transport, timeout=httpx.Timeout(60, connect=15),
@@ -30,14 +37,16 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
                 app.state.providers = ProviderClient(client)
                 yield
         finally:
+            await app.state.antigravity_account.close()
+            await app.state.codex_account.close()
             app.state.store.close()
 
     async def authenticate(request: Request):
         if request.headers.get("origin") is not None or request.headers.get("sec-fetch-site") is not None:
-            raise HTTPException(403, "浏览器访问未启用")
+            raise HTTPException(403, "Browser access is not enabled")
         authorization = request.headers.get("authorization", "")
         if not secrets.compare_digest(authorization.encode(), ("Bearer " + token).encode()):
-            raise HTTPException(401, "需要本地应用身份验证")
+            raise HTTPException(401, "Local app authentication is required")
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None,
                   dependencies=[Depends(authenticate)])
@@ -46,7 +55,7 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     async def validation_error(request, exc):
         # Pydantic's default error includes the original input, potentially an API key.
         return JSONResponse(status_code=422, content={"detail": [
-            {"loc": e["loc"], "type": e["type"], "msg": "输入值无效"} for e in exc.errors()]})
+            {"loc": e["loc"], "type": e["type"], "msg": "Invalid input"} for e in exc.errors()]})
 
     @app.exception_handler(CredentialError)
     async def credential_error(request, exc):
@@ -55,7 +64,7 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     def find_provider(provider_id, kinds):
         p = next((p for p in app.state.store.settings().providers if p.id == provider_id), None)
         if not p or p.kind not in kinds or (p.kind == "dictionary" and not experimental):
-            raise HTTPException(404, "后端不存在或未启用此功能")
+            raise HTTPException(404, "Service not found or this feature is not enabled")
         return p
 
     @app.get("/api/v1/health")
@@ -69,14 +78,75 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     @app.put("/api/v1/settings", response_model=Settings)
     async def update_settings(body: Settings):
         if not experimental and any(p.kind == "dictionary" and p.enabled for p in body.providers):
-            raise HTTPException(400, "微软词典仅在实验模式中可启用")
+            raise HTTPException(400, "Microsoft Dictionary requires experimental mode")
         return app.state.store.save_with_credentials(body, credentials)
+
+    @app.post("/api/v1/codex/install")
+    async def codex_install():
+        from .codex_install import install
+        if app.state.codex_install_lock.locked():
+            raise HTTPException(409, "Installation is already in progress.")
+        async with app.state.codex_install_lock:
+            try:
+                return {"cli_path": await install()}
+            except Exception as exc:
+                raise HTTPException(502, public_error(exc)) from None
+
+    @app.post("/api/v1/codex/login")
+    async def codex_login(body: CodexLogin):
+        try:
+            return await app.state.codex_account.start(body.cli_path)
+        except Exception as exc:
+            raise HTTPException(400, public_error(exc)) from None
+
+    @app.get("/api/v1/codex/login")
+    async def codex_status():
+        return app.state.codex_account.snapshot()
+
+    @app.delete("/api/v1/codex/login")
+    async def codex_cancel():
+        await app.state.codex_account.close()
+        return {"ok": True}
+
+    @app.post("/api/v1/antigravity/install")
+    async def antigravity_install():
+        from .antigravity_install import install
+        if app.state.antigravity_install_lock.locked():
+            raise HTTPException(409, "Installation is already in progress.")
+        async with app.state.antigravity_install_lock:
+            try:
+                return {"cli_path": await install()}
+            except Exception as exc:
+                raise HTTPException(502, public_error(exc)) from None
+
+    @app.post("/api/v1/antigravity/login")
+    async def antigravity_login(body: AntigravityLogin):
+        try:
+            return await app.state.antigravity_account.start(body.cli_path)
+        except Exception as exc:
+            raise HTTPException(400, public_error(exc)) from None
+
+    @app.get("/api/v1/antigravity/login")
+    async def antigravity_status():
+        return app.state.antigravity_account.snapshot()
+
+    @app.post("/api/v1/antigravity/login/code")
+    async def antigravity_code(body: AntigravityCode):
+        try:
+            return await app.state.antigravity_account.submit_code(body.code.get_secret_value())
+        except Exception as exc:
+            raise HTTPException(400, public_error(exc)) from None
+
+    @app.delete("/api/v1/antigravity/login")
+    async def antigravity_cancel():
+        await app.state.antigravity_account.close()
+        return {"ok": True}
 
     @app.post("/api/v1/providers/{provider_id}/test")
     async def test_provider(provider_id: UUID):
-        p = find_provider(provider_id, {"translation", "dictionary"})
+        p = find_provider(provider_id, {"translation", "gemini_cli", "antigravity_cli", "codex_cli", "dictionary"})
         try:
-            await app.state.providers.verify(p, credentials.get(str(p.id)))
+            await app.state.providers.verify(p, ("" if p.kind in ("gemini_cli", "antigravity_cli", "codex_cli") else credentials.get(str(p.id))))
         except Exception as exc:
             raise HTTPException(502, public_error(exc)) from None
         return {"ok": True}
@@ -85,9 +155,9 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     async def translate(body: TranslationRequest):
         settings = app.state.store.settings()
         providers = [p for p in settings.providers if p.enabled and (
-            p.kind == "translation" or (experimental and p.kind == "dictionary"))]
+            p.kind in ("translation", "gemini_cli", "antigravity_cli", "codex_cli") or (experimental and p.kind == "dictionary"))]
         if not providers:
-            raise HTTPException(400, "请先在设置中添加并启用翻译后端。")
+            raise HTTPException(400, "Add and enable a translation service in Settings first.")
         prompt = system_prompt(settings.target_language, settings.custom_prompt)
 
         async def events():
@@ -98,7 +168,7 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
 
             async def produce(p):
                 try:
-                    key = credentials.get(str(p.id))
+                    key = ("" if p.kind in ("gemini_cli", "antigravity_cli", "codex_cli") else credentials.get(str(p.id)))
                     if p.kind == "dictionary":
                         data = await app.state.providers.dictionary(p, key, body.text)
                         await queue.put(event("dictionary", p, data=data))
@@ -156,20 +226,20 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     async def note(note_id: UUID):
         result = app.state.store.note(note_id)
         if not result:
-            raise HTTPException(404, "笔记不存在")
+            raise HTTPException(404, "Note not found")
         return result
 
     @app.patch("/api/v1/notes/{note_id}", response_model=Note)
     async def update_note(note_id: UUID, body: NoteUpdate):
         result = app.state.store.update_note(note_id, body.user_note)
         if not result:
-            raise HTTPException(404, "笔记不存在")
+            raise HTTPException(404, "Note not found")
         return result
 
     @app.delete("/api/v1/notes/{note_id}", status_code=204)
     async def delete_note(note_id: UUID):
         if not app.state.store.delete_note(note_id):
-            raise HTTPException(404, "笔记不存在")
+            raise HTTPException(404, "Note not found")
         return Response(status_code=204)
 
     return app

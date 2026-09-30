@@ -11,12 +11,13 @@ class Model(BaseModel):
 
 class Provider(Model):
     id: UUID = Field(default_factory=uuid4)
-    name: str = "新后端"
-    kind: Literal["translation", "openai_tts", "dashscope_tts", "dictionary"] = "translation"
+    name: str = "New Service"
+    kind: Literal["translation", "gemini_cli", "antigravity_cli", "codex_cli", "openai_tts", "dashscope_tts", "dictionary"] = "translation"
     endpoint: str = "https://api.openai.com/v1"
     model: str = "gpt-4o-mini"
+    cli_path: str = "gemini"
     enabled: bool = True
-    reasoning: Literal["auto", "off", "low", "medium", "high", "xhigh", "max"] = "auto"
+    reasoning: Literal["auto", "off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"] = "auto"
     voice: str = "alloy"
     response_format: Literal["mp3", "opus", "aac", "flac", "wav", "pcm"] = "mp3"
     instructions: str = ""
@@ -34,9 +35,9 @@ class Provider(Model):
         value = value.strip().rstrip("/")
         parsed = urlsplit(value)
         if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password:
-            raise ValueError("请输入不含用户名或密码的 HTTP(S) 接口地址")
+            raise ValueError("Enter an HTTP(S) endpoint without a username or password")
         if parsed.fragment:
-            raise ValueError("接口地址不能包含 fragment")
+            raise ValueError("The endpoint must not contain a fragment")
         return value
 
 
@@ -50,13 +51,13 @@ class Hotkey(Model):
     def valid_modifiers(cls, value):
         value &= (1 << 17) | (1 << 18) | (1 << 19) | (1 << 20)
         if not value:
-            raise ValueError("快捷键至少需要一个修饰键")
+            raise ValueError("A shortcut must include at least one modifier key")
         return value
 
 
 class Settings(Model):
     providers: list[Provider] = Field(default_factory=list)
-    target_language: str = "中文"
+    target_language: str = "Chinese (Simplified)"
     custom_prompt: str = ""
     enable_hotkey: bool = True
     enable_ocr_hotkey: bool = True
@@ -70,9 +71,9 @@ class Settings(Model):
     def unique_ids_and_hotkeys(self):
         ids = [p.id for p in self.providers]
         if len(ids) != len(set(ids)):
-            raise ValueError("后端 ID 不能重复")
+            raise ValueError("Service IDs must be unique")
         if self.enable_hotkey and self.enable_ocr_hotkey and self.hotkey == self.ocr_hotkey:
-            raise ValueError("翻译和 OCR 快捷键不能相同")
+            raise ValueError("Translation and screenshot shortcuts must be different")
         return self
 
 
@@ -84,7 +85,7 @@ class TranslationRequest(Model):
     @classmethod
     def nonempty(cls, value):
         if not value.strip():
-            raise ValueError("原文不能为空")
+            raise ValueError("Source text cannot be empty")
         return value
 
 
@@ -118,3 +119,15 @@ class Note(NoteCreate):
     id: UUID = Field(default_factory=uuid4)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AntigravityLogin(Model):
+    cli_path: str = "agy"
+
+
+class AntigravityCode(Model):
+    code: SecretStr
+
+
+class CodexLogin(Model):
+    cli_path: str = "codex"

@@ -18,6 +18,7 @@ from .ocr import OCRCapture
 from .popup import FloatingIcon, TranslationPopup
 from .runtime import BackendRuntime
 from .settings import SettingsWindow
+from . import widgets as W
 
 
 class Delegate(NSObject):
@@ -37,6 +38,7 @@ class WindowDelegate(NSObject):
 
 class TranslatorApp:
     def __init__(self, experimental=False):
+        W.install_edit_menu()
         self.experimental = experimental
         self.runtime = None
         self.settings = Settings()
@@ -47,6 +49,7 @@ class TranslatorApp:
         self.translation_task = self.capture_task = self.speech_task = None
         self.capture_generation = 0
         self.speech_generation = 0
+        self.speech_preparing = False
         self.popup = TranslationPopup(self)
         self.icon = FloatingIcon(self.translate_selection)
         self.hotkeys = Hotkeys()
@@ -60,8 +63,16 @@ class TranslatorApp:
         self.set_close(self.popup.window, self.dismiss)
         self.monitor = A.NSEvent.addLocalMonitorForEventsMatchingMask_handler_(
             A.NSEventMaskKeyDown | A.NSEventMaskLeftMouseDown, self.local_event)
-        self.status_item = A.NSStatusBar.systemStatusBar().statusItemWithLength_(A.NSVariableStatusItemLength)
-        self.status_item.button().setTitle_("译 Py")
+        self.status_item = A.NSStatusBar.systemStatusBar().statusItemWithLength_(A.NSSquareStatusItemLength)
+        status_button = self.status_item.button()
+        image = W.symbol("textformat", "Translator")
+        if image:
+            image.setSize_(A.NSMakeSize(18, 18))
+            status_button.setImage_(image)
+        else:
+            status_button.setTitle_("T")
+        status_button.setToolTip_("Translator")
+        status_button.setAccessibilityLabel_("Translator")
         self.build_menu()
 
     def set_close(self, window, callback):
@@ -85,20 +96,20 @@ class TranslatorApp:
                 self.ready_items.append(value)
             return value
 
-        self.status_menu = item("正在启动本地服务…", lambda: None)
+        self.status_menu = item("Starting…", lambda: None)
         self.status_menu.setEnabled_(False)
-        self.retry_item = item("重新启动本地服务", self.start_backend)
+        self.retry_item = item("Restart Service", self.start_backend)
         menu.addItem_(A.NSMenuItem.separatorItem())
-        item("翻译选中文字", self.translate_selection, True)
-        item("翻译剪贴板", self.translate_clipboard, True)
-        item("截图 OCR 翻译…", self.translate_ocr, True)
-        self.notes_item = item("本地笔记…", self.open_notes, True)
+        item("Translate Selection", self.translate_selection, True)
+        item("Translate Clipboard", self.translate_clipboard, True)
+        item("Screenshot Translation…", self.translate_ocr, True)
+        self.notes_item = item("Notes…", self.open_notes, True)
         self.notes_item.setHidden_(True)
-        item("停止朗读", self.stop_speech)
+        item("Stop Speaking", self.stop_speech)
         menu.addItem_(A.NSMenuItem.separatorItem())
-        item("设置…", self.open_settings, True)
-        item("辅助功能授权…", self.permission)
-        item("退出", lambda: A.NSApp.terminate_(None))
+        item("Settings…", self.open_settings, True)
+        item("Accessibility Access…", self.permission)
+        item("Quit", lambda: A.NSApp.terminate_(None))
         self.status_item.setMenu_(menu)
 
     def start(self):
@@ -112,7 +123,7 @@ class TranslatorApp:
         self.retry_item.setEnabled_(False)
         for item in self.ready_items:
             item.setEnabled_(False)
-        self.status_menu.setTitle_("正在启动本地服务…")
+        self.status_menu.setTitle_("Starting…")
         if self.runtime:
             for task in tuple(self.pending):
                 task.cancel()
@@ -129,9 +140,10 @@ class TranslatorApp:
         self.runtime.start().add_done_callback(started)
 
     def startup_failed(self):
-        self.status_menu.setTitle_("本地服务启动失败；点击重新启动")
+        self.status_menu.setTitle_("Could not start. Please retry.")
+        self.retry_item.setHidden_(False)
         self.retry_item.setEnabled_(True)
-        self.popup.notice("本地 FastAPI 服务未能启动。请从菜单栏重试；也可从终端运行应用查看启动错误。")
+        self.popup.notice("The local service could not start. Retry from the menu bar, or launch the app from Terminal to see details.")
 
     def load_settings(self):
         def loaded(data):
@@ -139,7 +151,8 @@ class TranslatorApp:
             for item in self.ready_items:
                 item.setEnabled_(True)
             self.retry_item.setEnabled_(True)
-            self.status_menu.setTitle_("本地服务已就绪" + (" · 实验模式" if self.experimental else ""))
+            self.retry_item.setHidden_(True)
+            self.status_menu.setTitle_("Ready to Translate" + (" · Experimental" if self.experimental else ""))
             self.apply_settings(Settings.model_validate(data))
         self.request("GET", "/settings", done=loaded, error=lambda _: self.startup_failed())
 
@@ -199,9 +212,9 @@ class TranslatorApp:
 
     def permission(self):
         if accessibility_allowed(True):
-            alert("辅助功能权限已开启。")
+            alert("Accessibility access is enabled.")
         else:
-            alert("请在系统设置 → 隐私与安全性 → 辅助功能中启用 Text Selection Translation Python，然后重新启动应用。")
+            alert("Enable Text Selection Translation Python in System Settings → Privacy & Security → Accessibility, then restart the app.")
 
     def selection_found(self, point):
         if (self.ready and self.settings.enable_floating_icon and not self.ocr.busy
@@ -213,7 +226,7 @@ class TranslatorApp:
             return
         self.icon.hide()
         if not accessibility_allowed(True):
-            self.popup.notice("请先授予辅助功能权限，然后重新启动应用。", point)
+            self.popup.notice("Allow Accessibility access, then restart the app.", point)
             return
         self.capture_generation += 1
         generation = self.capture_generation
@@ -228,7 +241,7 @@ class TranslatorApp:
             if text:
                 self.translate(text, point)
             else:
-                self.popup.notice("没有获取到选中文字。请重试，或使用截图 OCR 翻译。", point)
+                self.popup.notice("No selected text found. Try again, or use Screenshot Translation.", point)
         self.capture_task = self.run(capture_selection(self.settings.restore_clipboard), done=captured)
 
     def translate_clipboard(self):
@@ -239,7 +252,7 @@ class TranslatorApp:
         if text and str(text).strip():
             self.translate(str(text))
         else:
-            self.popup.notice("剪贴板中没有文字。")
+            self.popup.notice("No text on the clipboard.")
 
     def translate_ocr(self):
         if not self.ready or self.ocr.busy:
@@ -307,6 +320,8 @@ class TranslatorApp:
 
     def stop_speech(self):
         self.speech_generation += 1
+        self.speech_preparing = False
+        self.popup.refresh_speech()
         if self.speech_task:
             self.speech_task.cancel()
         self.synthesizer.stopSpeakingAtBoundary_(AV.AVSpeechBoundaryImmediate)
@@ -328,7 +343,7 @@ class TranslatorApp:
                 bind(item, lambda _, p=p: self.speak_with(str(p.id), text), targets)
                 menu.addItem_(item)
             menu.addItem_(A.NSMenuItem.separatorItem())
-            native = A.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("macOS 本机语音", None, "")
+            native = A.NSMenuItem.alloc().initWithTitle_action_keyEquivalent_("macOS Voice", None, "")
             bind(native, lambda _: self.speak_native(text), targets)
             menu.addItem_(native)
             menu.popUpMenuPositioningItem_atLocation_inView_(None, A.NSEvent.mouseLocation(), None)
@@ -349,20 +364,31 @@ class TranslatorApp:
         if not text.strip():
             return
         self.stop_speech()
+        self.speech_preparing = True
+        self.popup.refresh_speech()
         language = language or NSLinguisticTagger.dominantLanguageForString_(text)
         generation = self.speech_generation
 
         def play(audio):
             if generation != self.speech_generation:
                 return
+            self.speech_preparing = False
+            self.popup.refresh_speech()
             data = NSData.dataWithBytes_length_(audio, len(audio))
             player, error = AV.AVAudioPlayer.alloc().initWithData_error_(data, None)
             if player is None:
-                raise RuntimeError(str(error.localizedDescription()) if error else "无法播放音频。")
+                raise RuntimeError(str(error.localizedDescription()) if error else "Could not play audio.")
             self.audio = player
             if not player.play():
-                raise RuntimeError("无法播放音频，请检查格式。")
-        self.speech_task = self.run(self.runtime.speech({"provider_id": provider_id, "text": text, "language": language}), done=play)
+                raise RuntimeError("Could not play audio. Check the audio format.")
+        def failed(exc):
+            if generation == self.speech_generation:
+                self.speech_preparing = False
+                self.popup.refresh_speech()
+                self.error(exc)
+
+        self.speech_task = self.run(self.runtime.speech({"provider_id": provider_id, "text": text, "language": language}),
+                                    done=play, error=failed)
 
     def begin_quit(self):
         if self.quitting:
@@ -382,7 +408,7 @@ class TranslatorApp:
                 if writes:
                     await asyncio.wait_for(asyncio.gather(*(asyncio.wrap_future(f) for f in writes)), 5)
             except Exception:
-                await on_main(lambda: alert("部分备注未能保存，请重试保存后退出。"))
+                await on_main(lambda: alert("Some notes could not be saved. Save them again before quitting."))
                 await on_main(self.abort_quit)
                 return
             await on_main(self.finish_quit)

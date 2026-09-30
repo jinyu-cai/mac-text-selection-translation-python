@@ -490,7 +490,7 @@ test -f "$TRANSLATOR_REFERENCE/src/mactranslator/contracts.py"
 cd "$TRANSLATOR_LAB"
 ```
 
-Change `TRANSLATOR_REFERENCE` if your checkout is elsewhere. If you are working in the original Swift repository, its `python-app/` directory can also serve as the reference. `test -f` should exit successfully; `echo $?` immediately afterwards prints `0` on success. Use a checkout containing the Python edition and this guide.
+Change `TRANSLATOR_REFERENCE` if your checkout is elsewhere. The local Python checkout now lives in the independent `~/github/mac-text-selection-translation-python` directory; the original Swift repository no longer contains `python-app/`. `test -f` should exit successfully; `echo $?` immediately afterwards prints `0` on success. Use a checkout containing the Python edition and this guide.
 
 Keep these exports in your main tutorial terminal. If you reopen Terminal, set them again before using the copy commands. The variables are conveniences, not application configuration.
 

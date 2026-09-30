@@ -24,11 +24,25 @@ def public_error(exc: Exception) -> str:
         return str(exc)
     if isinstance(exc, httpx.HTTPStatusError):
         code = exc.response.status_code
-        hint = {401: "请检查 API Key", 403: "没有访问权限", 404: "请检查地址或模型", 429: "请求过多或额度不足"}
-        return f"请求失败 HTTP {code}：{hint.get(code, '服务暂不可用')}"
+        if code in (400, 422):
+            try:
+                body = exc.response.json()
+            except (ValueError, httpx.ResponseNotRead):
+                body = None
+            detail = body.get("error") if isinstance(body, dict) else None
+            # Never display an upstream message or arbitrary parameter name: a
+            # compatible service may echo credentials/source text in any field.
+            if isinstance(detail, dict) and detail.get("code") in ("unsupported_value", "unsupported_parameter"):
+                param = detail.get("param")
+                if param in ("temperature", "top_p", "reasoning_effort", "max_completion_tokens", "model"):
+                    return f"Request failed HTTP {code}: The selected model does not support {param} with these settings."
+        hint = {400: "Check the model and request parameters", 401: "Check your API key",
+                403: "Access denied", 404: "Check the endpoint or model",
+                422: "Check the model and request parameters", 429: "Rate limit or quota exceeded"}
+        return f"Request failed HTTP {code}: {hint.get(code, 'Service temporarily unavailable')}"
     if isinstance(exc, httpx.TransportError):
-        return f"网络请求失败（{type(exc).__name__}），请检查网络和接口地址。"
-    return f"无法处理服务响应（{type(exc).__name__}）。"
+        return f"Network request failed ({type(exc).__name__}). Check your connection and endpoint."
+    return f"Could not process the service response ({type(exc).__name__})."
 
 
 async def sse_data(lines):
@@ -61,6 +75,16 @@ class ProviderClient:
         return headers
 
     async def translate(self, p, key, prompt, text, request_id):
+        if p.kind in ("gemini_cli", "antigravity_cli", "codex_cli"):
+            if p.kind == "codex_cli":
+                from .codex_cli import translate
+            elif p.kind == "antigravity_cli":
+                from .antigravity_cli import translate
+            else:
+                from .gemini_cli import translate
+            async for delta in translate(p, prompt, text):
+                yield delta
+            return
         body = {"model": p.model, "stream": True, "messages": messages(p.model, prompt, text),
                 **parameters(p.model, p.reasoning)}
         received = False
@@ -68,13 +92,15 @@ class ProviderClient:
             try:
                 async with self.http.stream("POST", endpoint(p.endpoint, p.kind), json=body,
                                             headers=self.headers(p, key, request_id)) as response:
+                    if response.is_error:
+                        await response.aread()
                     response.raise_for_status()
                     async for data in sse_data(response.aiter_lines()):
                         if data.strip() == "[DONE]":
                             break
                         chunk = json.loads(data)
                         if chunk.get("error"):
-                            raise ProviderError("翻译服务返回错误，请检查模型配置和额度。")
+                            raise ProviderError("The translation service returned an error. Check the model and quota.")
                         choices = chunk.get("choices") or []
                         content = (choices[0].get("delta") or {}).get("content") if choices else None
                         if isinstance(content, list):
@@ -83,7 +109,7 @@ class ProviderClient:
                             received = True
                             yield content
                 if not received:
-                    raise ProviderError("没有收到翻译结果。")
+                    raise ProviderError("No translation was received.")
                 return
             except Exception as exc:
                 if not should_retry(exc, attempt, received):
@@ -91,6 +117,10 @@ class ProviderClient:
                 await asyncio.sleep(0.4)
 
     async def verify(self, p, key):
+        if p.kind in ("gemini_cli", "antigravity_cli", "codex_cli"):
+            async for _ in self.translate(p, "", "Translate the source text into Chinese.", "Hello", None):
+                pass
+            return
         if p.kind == "dictionary":
             await self.dictionary(p, key, "hello")
             return
@@ -103,7 +133,7 @@ class ProviderClient:
                                                 headers=self.headers(p, key))
                 response.raise_for_status()
                 if not response.json().get("choices"):
-                    raise ProviderError("连接成功，但响应中没有 choices。")
+                    raise ProviderError("Connected, but the response did not contain any choices.")
                 return
             except Exception as exc:
                 if not should_retry(exc, attempt, False):
@@ -112,9 +142,9 @@ class ProviderClient:
 
     async def dictionary(self, p, key, text):
         if not key or not p.from_language.strip() or not p.to_language.strip():
-            raise ProviderError("请填写微软词典 Key 和语言。")
+            raise ProviderError("Enter a Microsoft Dictionary key and languages.")
         if len(text.strip()) > 100:
-            raise ProviderError("微软词典仅支持不超过 100 字符的词语。")
+            raise ProviderError("Microsoft Dictionary supports terms up to 100 characters.")
         headers = {"Ocp-Apim-Subscription-Key": key, "X-ClientTraceId": str(uuid4())}
         if p.region.strip():
             headers["Ocp-Apim-Subscription-Region"] = p.region.strip()
@@ -124,13 +154,13 @@ class ProviderClient:
         response.raise_for_status()
         result = response.json()
         if not isinstance(result, list) or not result:
-            raise ProviderError("没有收到词典结果。")
+            raise ProviderError("No dictionary results were received.")
         return result[0]
 
     async def speech(self, p, key, text, language):
         text = speech_text(text)
         if not text:
-            raise ProviderError("没有可朗读的文字。")
+            raise ProviderError("There is no text to speak.")
         if p.kind == "openai_tts":
             body = {"model": p.model.strip(), "input": text, "voice": p.voice.strip(),
                     "response_format": p.response_format}
@@ -138,7 +168,7 @@ class ProviderClient:
                 body["instructions"] = p.instructions.strip()
         else:
             if not key:
-                raise ProviderError("请填写 DashScope API Key。")
+                raise ProviderError("Enter a DashScope API key.")
             inputs = {"text": text, "voice": p.voice.strip(), "format": p.response_format, "sample_rate": 24000}
             if p.instructions.strip():
                 inputs["instruction"] = p.instructions.strip()
@@ -152,11 +182,11 @@ class ProviderClient:
         if p.kind == "dashscope_tts":
             result = response.json()
             if result.get("code"):
-                raise ProviderError("DashScope 合成失败，请检查模型、音色和地域设置。")
+                raise ProviderError("DashScope synthesis failed. Check the model, voice, and region.")
             url = ((result.get("output") or {}).get("audio") or {}).get("url", "")
             parts = urlsplit(url)
             if parts.scheme not in ("http", "https") or not parts.hostname or parts.username or parts.password:
-                raise ProviderError("服务返回了无效音频地址。")
+                raise ProviderError("The service returned an invalid audio URL.")
             if parts.scheme == "http" and parts.hostname.endswith(".aliyuncs.com"):
                 url = urlunsplit(parts._replace(scheme="https"))
             # No provider authorization is forwarded to the audio host.
@@ -164,7 +194,7 @@ class ProviderClient:
             response.raise_for_status()
         audio = response.content
         if not audio:
-            raise ProviderError("没有收到音频。")
+            raise ProviderError("No audio was received.")
         fmt = p.response_format
         if fmt == "pcm":
             output = io.BytesIO()

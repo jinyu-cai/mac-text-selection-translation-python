@@ -28,7 +28,7 @@ class KeychainCredentials:
     @staticmethod
     def _check(status):
         if status:
-            raise CredentialError(f"钥匙串无法访问（{status}）。请在设置中重新输入 API Key。")
+            raise CredentialError(f"Keychain is unavailable ({status}). Enter the API key again in Settings.")
 
     def get(self, account):
         import Security as S

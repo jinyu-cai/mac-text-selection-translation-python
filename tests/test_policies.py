@@ -19,6 +19,13 @@ from mactranslator.policies import (
     ("gpt-5", "off", {"reasoning_effort": "none"}),
     ("gpt-5-codex", "max", {"reasoning_effort": "max"}),
     ("o3-mini", "xhigh", {"reasoning_effort": "xhigh"}),
+    ("gpt-6-luna", "auto", {}),
+    ("gpt-6-luna", "high", {"reasoning_effort": "high"}),
+    ("gpt-6-luna", "off", {"temperature": .2, "reasoning_effort": "none"}),
+    ("openai/gpt-6-luna", "auto", {}),
+    ("gpt-6-sol", "auto", {}),
+    ("gpt-6-sol", "off", {"temperature": .2, "reasoning_effort": "none"}),
+    ("gpt-6-astra", "auto", {}),
     ("openrouter/hunyuan-mt-7b", "high", {"temperature": .7, "top_p": .6}),
 ])
 def test_parameters(name, effort, want):

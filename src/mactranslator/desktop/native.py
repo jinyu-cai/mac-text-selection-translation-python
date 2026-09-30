@@ -33,11 +33,11 @@ async def on_main(function):
     return await future
 
 
-def alert(message, title="划词翻译"):
+def alert(message, title="Translator"):
     panel = A.NSAlert.alloc().init()
     panel.setMessageText_(title)
     panel.setInformativeText_(str(message))
-    panel.addButtonWithTitle_("好")
+    panel.addButtonWithTitle_("OK")
     panel.runModal()
 
 
@@ -190,7 +190,7 @@ class Hotkeys:
         target = self.lib.GetEventDispatcherTarget()
         status = self.lib.InstallEventHandler(target, self.callback, 1, C.byref(spec), None, C.byref(self.handler))
         if status:
-            raise RuntimeError(f"无法注册快捷键处理器（{status}）")
+            raise RuntimeError(f"Could not register the shortcut handler ({status}).")
         for index, (hotkey, callback) in enumerate(bindings, 1):
             modifiers = sum(carbon for native, carbon in ((1 << 20, 256), (1 << 17, 512),
                                                            (1 << 19, 2048), (1 << 18, 4096))
@@ -200,7 +200,7 @@ class Hotkeys:
                                                   self.ID(0x4D545250, index), target, 0, C.byref(ref))
             if status:
                 self.stop()
-                raise RuntimeError(f"快捷键已被占用或无法注册（{status}）。请更换快捷键。")
+                raise RuntimeError(f"Shortcut unavailable or already in use ({status}). Choose another shortcut.")
             self.refs.append(ref)
             self.callbacks[index] = callback
 
@@ -262,6 +262,6 @@ def set_login(enabled):
     if enabled != registered:
         ok, error = service.registerAndReturnError_(None) if enabled else service.unregisterAndReturnError_(None)
         if not ok:
-            raise RuntimeError(str(error.localizedDescription()) if error else "无法更新登录项。请使用打包后的应用。")
+            raise RuntimeError(str(error.localizedDescription()) if error else "Could not update login items. Please use the installed app.")
     if service.status() == SMAppServiceStatusRequiresApproval:
         SMAppService.openSystemSettingsLoginItems()

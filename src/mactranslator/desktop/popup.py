@@ -1,4 +1,5 @@
 import AppKit as A
+import objc
 from PyObjCTools import AppHelper
 
 from mactranslator.policies import can_save, first_usable, fit_frame
@@ -15,17 +16,31 @@ class FloatingPanel(A.NSPanel):
         return False
 
 
+class VerticalClipView(A.NSClipView):
+    """Keep cards aligned even during trackpad gestures and text selection."""
+
+    def scrollToPoint_(self, point):
+        objc.super(VerticalClipView, self).scrollToPoint_(A.NSMakePoint(0, point.y))
+
+    def constrainBoundsRect_(self, proposed):
+        bounds = objc.super(VerticalClipView, self).constrainBoundsRect_(proposed)
+        bounds.origin.x = 0
+        return bounds
+
+
 def screen_at(point):
     return next((s for s in A.NSScreen.screens() if A.NSPointInRect(point, s.frame())), A.NSScreen.mainScreen())
 
 
 class FloatingIcon:
+    SIZE = 32
+
     def __init__(self, action):
         self.targets = []
         self.generation = 0
         self.point = None
         self.window = FloatingPanel.alloc().initWithContentRect_styleMask_backing_defer_(
-            A.NSMakeRect(0, 0, 32, 32), A.NSWindowStyleMaskBorderless | A.NSWindowStyleMaskNonactivatingPanel,
+            A.NSMakeRect(0, 0, self.SIZE, self.SIZE), A.NSWindowStyleMaskBorderless | A.NSWindowStyleMaskNonactivatingPanel,
             A.NSBackingStoreBuffered, False)
         self.window.setReleasedWhenClosed_(False)
         self.window.setLevel_(A.NSFloatingWindowLevel)
@@ -36,9 +51,17 @@ class FloatingIcon:
         self.window.setOpaque_(False)
         self.window.setBackgroundColor_(A.NSColor.clearColor())
         self.window.setHasShadow_(False)
-        button = W.button(self.window.contentView(), "T", 0, 1, 32, lambda _: self.activate(action), self.targets)
+        button = W.button(self.window.contentView(), "T", 0, 0, self.SIZE, lambda _: self.activate(action), self.targets)
+        button.setBezelStyle_(A.NSBezelStyleRegularSquare)
+        button.setFrame_(A.NSMakeRect(0, 0, self.SIZE, self.SIZE))
+        button.setFont_(A.NSFont.systemFontOfSize_weight_(16, A.NSFontWeightMedium))
+        button.setWantsLayer_(True)
+        button.layer().setCornerRadius_(7)
+        button.layer().setMasksToBounds_(True)
         image = W.symbol("textformat", "Translate Selection")
         if image:
+            config = A.NSImageSymbolConfiguration.configurationWithPointSize_weight_(16, A.NSFontWeightMedium)
+            image = image.imageWithSymbolConfiguration_(config)
             button.setImage_(image)
             button.setImagePosition_(A.NSImageOnly)
         button.setToolTip_("Translate Selection")
@@ -53,7 +76,7 @@ class FloatingIcon:
         self.generation += 1
         generation = self.generation
         screen = screen_at(point).visibleFrame()
-        frame = fit_frame((point.x + 6, point.y - 6), (32, 32),
+        frame = fit_frame((point.x + 6, point.y - 6), (self.SIZE, self.SIZE),
                           (screen.origin.x, screen.origin.y, screen.size.width, screen.size.height))
         self.window.setFrame_display_(A.NSMakeRect(*frame), True)
         self.window.orderFrontRegardless()
@@ -162,6 +185,9 @@ class TranslationPopup:
         self.divider.setBoxType_(A.NSBoxSeparator)
         self.content.addSubview_(self.divider)
         self.scroll = A.NSScrollView.alloc().initWithFrame_(A.NSMakeRect(14, 14, 332, 112))
+        self.scroll.setContentView_(VerticalClipView.alloc().initWithFrame_(self.scroll.bounds()))
+        self.scroll.setHasHorizontalScroller_(False)
+        self.scroll.setHorizontalScrollElasticity_(A.NSScrollElasticityNone)
         self.scroll.setHasVerticalScroller_(True)
         self.scroll.setScrollerStyle_(A.NSScrollerStyleOverlay)
         self.scroll.setAutohidesScrollers_(True)
@@ -271,6 +297,8 @@ class TranslationPopup:
         width = self.window.frame().size.width
         body_width = max(1, width - 28)
         origin = self.scroll.contentView().bounds().origin
+        self.scroll.setFrameSize_(A.NSMakeSize(body_width, self.scroll.frame().size.height))
+        card_width = max(1, self.scroll.contentSize().width)
         self.source_card.view.setHidden_(self.notice_text is not None)
         self.notice_view.setHidden_(self.notice_text is None)
         y = 0
@@ -278,15 +306,15 @@ class TranslationPopup:
             self.notice_view.setString_(self.notice_text)
             self.notice_view.setFont_(A.NSFont.systemFontOfSize_(13))
             self.notice_view.setTextColor_(A.NSColor.systemOrangeColor())
-            self.notice_view.setFrame_(A.NSMakeRect(0, 0, body_width, 24))
+            self.notice_view.setFrame_(A.NSMakeRect(0, 0, card_width, 24))
             container = self.notice_view.textContainer()
-            container.setContainerSize_(A.NSMakeSize(body_width, 1e7))
+            container.setContainerSize_(A.NSMakeSize(card_width, 1e7))
             self.notice_view.layoutManager().ensureLayoutForTextContainer_(container)
             y = max(24, self.notice_view.layoutManager().usedRectForTextContainer_(container).size.height + 1)
-            self.notice_view.setFrameSize_(A.NSMakeSize(body_width, y))
+            self.notice_view.setFrameSize_(A.NSMakeSize(card_width, y))
         else:
             self.source_card.update("", self.source)
-            y = self.source_card.layout(body_width) + 12
+            y = self.source_card.layout(card_width) + 12
         entries = [] if self.notice_text is not None else [
             (r["id"], r["name"], r["output"], r["loading"], r.get("error")) for r in self.results]
         if self.notice_text is None:
@@ -303,7 +331,7 @@ class TranslationPopup:
             card = self.cards[key]
             card.update(title, output, loading, error)
             card.view.setFrameOrigin_(A.NSMakePoint(0, y))
-            y += card.layout(body_width) + 12
+            y += card.layout(card_width) + 12
         content_height = y + 14
         if self.user_size is None:
             self._resize(width, max(110, min(460, content_height + 62)))
@@ -316,7 +344,7 @@ class TranslationPopup:
         (self.progress.startAnimation_ if self.loading else self.progress.stopAnimation_)(None)
         self.divider.setFrame_(A.NSMakeRect(14, height - 48, body_width, 1))
         self.scroll.setFrame_(A.NSMakeRect(14, 0, body_width, max(1, height - 60)))
-        self.document.setFrameSize_(A.NSMakeSize(body_width, max(content_height, self.scroll.contentSize().height)))
+        self.document.setFrameSize_(A.NSMakeSize(card_width, max(content_height, self.scroll.contentSize().height)))
         visible = self.scroll.contentView().bounds().size.height
         self.scroll.contentView().scrollToPoint_(A.NSMakePoint(0, min(origin.y, max(0, content_height - visible))))
         self.scroll.reflectScrolledClipView_(self.scroll.contentView())

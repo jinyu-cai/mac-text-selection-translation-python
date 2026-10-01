@@ -9,6 +9,7 @@ import AVFoundation as AV
 from Foundation import NSData, NSLinguisticTagger, NSObject
 from PyObjCTools import AppHelper
 
+from mactranslator import APP_NAME
 from mactranslator.backend.storage import data_directory
 from mactranslator.contracts import Settings
 from mactranslator.policies import speech_text
@@ -18,6 +19,7 @@ from .ocr import OCRCapture
 from .popup import FloatingIcon, TranslationPopup
 from .runtime import BackendRuntime
 from .settings import SettingsWindow
+from .version import version_label
 from . import widgets as W
 
 
@@ -71,7 +73,7 @@ class TranslatorApp:
             status_button.setImage_(image)
         else:
             status_button.setTitle_("T")
-        status_button.setToolTip_("Translator")
+        status_button.setToolTip_(f"{APP_NAME} — {version_label()}")
         status_button.setAccessibilityLabel_("Translator")
         self.build_menu()
 
@@ -96,6 +98,9 @@ class TranslatorApp:
                 self.ready_items.append(value)
             return value
 
+        item(APP_NAME, lambda: None).setEnabled_(False)
+        item(version_label(), lambda: None).setEnabled_(False)
+        menu.addItem_(A.NSMenuItem.separatorItem())
         self.status_menu = item("Starting…", lambda: None)
         self.status_menu.setEnabled_(False)
         self.retry_item = item("Restart Service", self.start_backend)

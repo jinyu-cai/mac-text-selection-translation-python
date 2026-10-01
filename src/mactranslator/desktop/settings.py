@@ -7,6 +7,7 @@ from mactranslator.policies import TEMPLATE, move
 from mactranslator.presets import codex_cli_provider, antigravity_cli_provider, google_ai_studio_provider
 from . import widgets as W
 from .native import login_status, set_login
+from .version import version_label
 
 
 def shortcut_label(hotkey):
@@ -20,7 +21,7 @@ def shortcut_label(hotkey):
 class SettingsWindow:
     def __init__(self, app):
         self.app, self.targets = app, []
-        self.window = W.window("Settings", 850, 700)
+        self.window = W.window(f"Settings — {version_label()}", 850, 700)
         self.draft = app.settings.model_dump(mode="json")
         self.index = None
         self.recording = None

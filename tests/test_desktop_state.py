@@ -7,7 +7,24 @@ import pytest
 pytest.importorskip("AppKit")
 
 from mactranslator.desktop.notes import NotesWindow  # noqa: E402
-from mactranslator.desktop.popup import TranslationPopup  # noqa: E402
+from mactranslator.desktop.popup import TranslationPopup, VerticalClipView  # noqa: E402
+
+
+@pytest.mark.parametrize("width", [272, 572, 872])
+@pytest.mark.parametrize("horizontal_offset", [-80, 0, 80])
+def test_popup_blocks_horizontal_scrolling_but_preserves_vertical(width, horizontal_offset):
+    import AppKit as A
+
+    clip = VerticalClipView.alloc().initWithFrame_(A.NSMakeRect(0, 0, width, 100))
+    # An oversized document must not allow gestures or selection to shift the cards.
+    document = A.NSView.alloc().initWithFrame_(A.NSMakeRect(0, 0, width + 200, 1000))
+    clip.setDocumentView_(document)
+    bounds = clip.constrainBoundsRect_(A.NSMakeRect(horizontal_offset, 120, width, 100))
+    assert bounds.origin.x == 0
+    assert bounds.origin.y == 120
+    clip.scrollToPoint_(A.NSMakePoint(horizontal_offset, 120))
+    assert clip.bounds().origin.x == 0
+    assert clip.bounds().origin.y == 120
 
 
 def test_superseded_stream_cannot_change_popup():

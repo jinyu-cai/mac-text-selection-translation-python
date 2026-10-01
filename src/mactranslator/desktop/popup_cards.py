@@ -112,7 +112,13 @@ class OutputCard:
         container = self.text.textContainer()
         container.setContainerSize_(A.NSMakeSize(text_width, 1e7))
         self.text.layoutManager().ensureLayoutForTextContainer_(container)
-        height = max(20, math.ceil(self.text.layoutManager().usedRectForTextContainer_(container).size.height))
+        manager = self.text.layoutManager()
+        used = manager.usedRectForTextContainer_(container)
+        glyphs = manager.boundingRectForGlyphRange_inTextContainer_(
+            manager.glyphRangeForTextContainer_(container), container)
+        # Fallback-font subscripts can extend below the nominal line fragment.
+        # Include their ink bounds and a small rounding margin in the text view.
+        height = max(20, math.ceil(max(A.NSMaxY(used), A.NSMaxY(glyphs))) + 3)
         self.text.setFrameSize_(A.NSMakeSize(text_width, height))
         total = max(24, text_y + height + padding)
         self.view.setFrameSize_(A.NSMakeSize(width, total))

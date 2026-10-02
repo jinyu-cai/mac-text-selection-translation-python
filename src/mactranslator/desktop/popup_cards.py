@@ -132,3 +132,28 @@ class OutputCard:
             title_width = min(self.title.attributedStringValue().size().width, width - 96)
             self.progress.setFrameOrigin_(A.NSMakePoint(12 + title_width, 10))
         return total
+
+
+class SuggestionCard(OutputCard):
+    """A wrapping recommendation with a separate, always visible save action."""
+    def __init__(self, app, save):
+        super().__init__(app)
+        self.save_button = W.button(self.view, "Save word", 8, 0, 130, lambda _: save(), self.targets)
+
+    def update_suggestion(self, item):
+        output = item["term"] + "\n" + item["meaning"] + "\n\n" + item["context"]
+        if item.get("save_error"):
+            output += "\n\n" + item["save_error"]
+        self.update("AI suggested word", output)
+        self.text.setString_(output)
+        self.text.setFont_(A.NSFont.systemFontOfSize_(13))
+        self.text.setTextColor_(A.NSColor.labelColor())
+        state = item["save_state"]
+        self.save_button.setTitle_({"saved": "Saved", "saving": "Saving…"}.get(state, "Save word"))
+        self.save_button.setEnabled_(state == "idle" and self.app.settings.enable_notes)
+
+    def layout(self, width):
+        height = super().layout(width)
+        self.save_button.setFrame_(A.NSMakeRect(8, height, 130, 28))
+        self.view.setFrameSize_(A.NSMakeSize(width, height + 36))
+        return height + 36

@@ -1,9 +1,11 @@
 import copy
 
 import AppKit as A
+from Foundation import NSObject
 
 from mactranslator.contracts import Hotkey, Provider, Settings
 from mactranslator.policies import TEMPLATE, move
+from mactranslator.word_suggestions import AI_KINDS, DEFAULT_PROMPT, configuration_error
 from mactranslator.presets import codex_cli_provider, antigravity_cli_provider, google_ai_studio_provider
 from . import widgets as W
 from .native import login_status, set_login
@@ -18,6 +20,12 @@ def shortcut_label(hotkey):
     return prefix + KEY_NAMES.get(hotkey["key_code"], f"Key {hotkey['key_code']}")
 
 
+class SettingsTabDelegate(NSObject):
+    def tabView_didSelectTabViewItem_(self, tabs, item):
+        if str(item.identifier()) == "AI Word Suggestions":
+            self.owner.collect_provider()
+
+
 class SettingsWindow:
     def __init__(self, app):
         self.app, self.targets = app, []
@@ -28,13 +36,17 @@ class SettingsWindow:
         root = self.window.contentView()
         tabs = A.NSTabView.alloc().initWithFrame_(A.NSMakeRect(16, 58, 818, 626))
         root.addSubview_(tabs)
-        for title, build in (("General", self.build_general), ("Translation & Speech", self.build_providers)):
+        for title, build in (("General", self.build_general), ("Translation & Speech", self.build_providers),
+                             ("AI Word Suggestions", self.build_suggestions)):
             tab = A.NSTabViewItem.alloc().initWithIdentifier_(title)
             tab.setLabel_(title)
             view = A.NSView.alloc().initWithFrame_(A.NSMakeRect(0, 0, 790, 580))
             tab.setView_(view)
             tabs.addTabViewItem_(tab)
             build(view)
+        self.tab_delegate = SettingsTabDelegate.alloc().init()
+        self.tab_delegate.owner = self
+        tabs.setDelegate_(self.tab_delegate)
         self.status = W.label(root, "", 20, 15, 590, 28)
         W.button(root, "Cancel", 620, 15, 90, lambda _: self.close(), self.targets)
         self.save_button = W.button(root, "Save", 730, 15, 95, lambda _: self.save(), self.targets)
@@ -49,6 +61,7 @@ class SettingsWindow:
             view.setTitle_(shortcut_label(self.draft[key]))
         from ServiceManagement import SMAppServiceStatusEnabled, SMAppServiceStatusRequiresApproval
         self.login.setState_(login_status() in (SMAppServiceStatusEnabled, SMAppServiceStatusRequiresApproval))
+        self.reload_suggestions()
         self.refresh_list()
         self.status.setStringValue_("")
 
@@ -74,6 +87,47 @@ class SettingsWindow:
                  lambda _: self.prompt.setString_(TEMPLATE), self.targets)
         self.prompt, _ = W.text_area(parent, 18, 35, 722, 218, editable=True)
         self.prompt.setString_(self.draft["custom_prompt"])
+
+    def build_suggestions(self, parent):
+        self.suggestions_enabled = W.check(parent, "Enable AI word suggestions", 18, 536, 450)
+        W.label(parent, "Requires local notes. Adds one AI request per translation; history is not sent.",
+                18, 500, 730)
+        W.label(parent, "AI service", 18, 456, 110)
+        self.suggestions_service = W.choice(parent, [], 135, 454, 475)
+        W.button(parent, "Refresh", 625, 454, 115, lambda _: self.collect_provider(), self.targets)
+        W.label(parent, "Recommendations", 18, 412, 160)
+        self.suggestions_count = W.choice(parent, [str(i) for i in range(1, 6)], 185, 410, 80)
+        W.label(parent, "Learning preferences (level, interests, vocabulary goals)", 18, 369, 720)
+        self.suggestions_preferences, _ = W.text_area(parent, 18, 260, 722, 102, editable=True)
+        W.label(parent, "Word suggestion prompt", 18, 222, 460)
+        W.button(parent, "Use Default Template", 535, 220, 205,
+                 lambda _: self.suggestions_prompt.setString_(DEFAULT_PROMPT), self.targets)
+        self.suggestions_prompt, _ = W.text_area(parent, 18, 35, 722, 178, editable=True)
+        self.suggestion_service_ids = []
+        self.reload_suggestions()
+
+    def reload_suggestions(self):
+        self.suggestions_enabled.setState_(self.draft["enable_word_suggestions"])
+        self.suggestions_count.selectItemWithTitle_(str(self.draft["word_suggestions_count"]))
+        self.suggestions_preferences.setString_(self.draft["word_suggestions_preferences"])
+        self.suggestions_prompt.setString_(self.draft["word_suggestions_prompt"] or DEFAULT_PROMPT)
+        self.refresh_suggestion_services(self.draft["word_suggestions_provider_id"], preserve=False)
+
+    def refresh_suggestion_services(self, selected=None, preserve=True):
+        if not hasattr(self, "suggestions_service"):
+            return
+        index = self.suggestions_service.indexOfSelectedItem()
+        if preserve and 0 <= index < len(self.suggestion_service_ids):
+            selected = self.suggestion_service_ids[index]
+        providers = [p for p in self.draft["providers"] if p["enabled"] and p["kind"] in AI_KINDS]
+        self.suggestion_service_ids = [None] + [p["id"] for p in providers]
+        titles = ["Choose an enabled AI service…"] + [f"{i + 1}. {p['name']}" for i, p in enumerate(providers)]
+        if selected and selected not in self.suggestion_service_ids:
+            self.suggestion_service_ids.append(selected)
+            titles.append("Unavailable service — choose another")
+        self.suggestions_service.removeAllItems()
+        self.suggestions_service.addItemsWithTitles_(titles)
+        self.suggestions_service.selectItemAtIndex_(self.suggestion_service_ids.index(selected))
 
     def build_providers(self, parent):
         self.provider_choice = W.choice(parent, [], 18, 532, 726, lambda _: self.select(), self.targets)
@@ -206,6 +260,7 @@ class SettingsWindow:
         if self.index is not None:
             self.provider_choice.selectItemAtIndex_(self.index)
         self.load_provider()
+        self.refresh_suggestion_services()
 
     def load_provider(self):
         p = self.draft["providers"][self.index] if self.index is not None else Provider().model_dump(mode="json")
@@ -241,6 +296,7 @@ class SettingsWindow:
             p["api_key"] = ""
         elif self.key.stringValue():
             p["api_key"] = str(self.key.stringValue()).strip()
+        self.refresh_suggestion_services()
 
     def select(self):
         index = self.provider_choice.indexOfSelectedItem()
@@ -317,15 +373,25 @@ class SettingsWindow:
         self.collect_provider()
         self.draft.update({key: bool(view.state()) for key, view in self.checks.items()})
         self.draft.update(target_language=str(self.language.stringValue()), custom_prompt=str(self.prompt.string()))
-        Settings.model_validate(self.draft)
+        self.draft.update(
+            enable_word_suggestions=bool(self.suggestions_enabled.state()),
+            word_suggestions_provider_id=self.suggestion_service_ids[self.suggestions_service.indexOfSelectedItem()],
+            word_suggestions_count=int(self.suggestions_count.titleOfSelectedItem()),
+            word_suggestions_preferences=str(self.suggestions_preferences.string()),
+            word_suggestions_prompt=str(self.suggestions_prompt.string()))
+        settings = Settings.model_validate(self.draft)
+        if error := configuration_error(settings):
+            raise ValueError(error)
         return copy.deepcopy(self.draft)
 
     def save(self, after=None):
         self.cancel_recording()
         try:
             body = self.gather()
-        except ValueError:
-            self.status.setStringValue_("Check the endpoint, shortcuts, and required fields.")
+        except ValueError as exc:
+            from pydantic import ValidationError
+            self.status.setStringValue_("Check the endpoint, shortcuts, and required fields."
+                                       if isinstance(exc, ValidationError) else str(exc))
             return
         self.save_button.setEnabled_(False)
         self.status.setStringValue_("Saving…")

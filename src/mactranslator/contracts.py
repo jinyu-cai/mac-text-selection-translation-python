@@ -64,6 +64,11 @@ class Settings(Model):
     enable_floating_icon: bool = True
     restore_clipboard: bool = True
     enable_notes: bool = False
+    enable_word_suggestions: bool = False
+    word_suggestions_provider_id: UUID | None = None
+    word_suggestions_count: int = Field(default=3, ge=1, le=5)
+    word_suggestions_preferences: str = ""
+    word_suggestions_prompt: str = ""
     hotkey: Hotkey = Field(default_factory=Hotkey)
     ocr_hotkey: Hotkey = Field(default_factory=lambda: Hotkey(key_code=31, modifiers=(1 << 19) | (1 << 17)))
 
@@ -89,6 +94,26 @@ class TranslationRequest(Model):
         return value
 
 
+class WordSuggestion(Model):
+    term: str = Field(min_length=1, max_length=1000)
+    meaning: str = Field(min_length=1, max_length=10000)
+    context: str = Field(min_length=1, max_length=200_000)
+
+    @field_validator("term", "meaning", "context")
+    @classmethod
+    def nonblank(cls, value):
+        if not value.strip():
+            raise ValueError("Suggestion fields cannot be blank")
+        return value.strip()
+
+
+class WordSuggestionsResponse(Model):
+    request_id: UUID
+    provider_id: UUID
+    backend_name: str
+    suggestions: list[WordSuggestion]
+
+
 class StreamEvent(Model):
     type: Literal["start", "delta", "provider_done", "provider_error", "dictionary", "done"]
     request_id: UUID
@@ -105,6 +130,7 @@ class SpeechRequest(Model):
 
 
 class NoteCreate(Model):
+    context: str | None = None
     source_text: str = Field(min_length=1)
     translated_text: str | None = None
     backend_name: str | None = None

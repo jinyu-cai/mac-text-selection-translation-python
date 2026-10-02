@@ -17,6 +17,8 @@ from .codex_account import AccountSession as CodexAccountSession
 from .credentials import CredentialError, KeychainCredentials
 from .providers import ProviderClient, public_error
 from .storage import Store, data_directory
+from mactranslator.contracts import WordSuggestionsResponse
+from mactranslator.word_suggestions import configuration_error, suggestion_prompt, parse_suggestions
 
 
 def create_app(token: str, database: Path | None = None, credentials=None, transport=None, experimental=False):
@@ -79,6 +81,8 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
     async def update_settings(body: Settings):
         if not experimental and any(p.kind == "dictionary" and p.enabled for p in body.providers):
             raise HTTPException(400, "Microsoft Dictionary requires experimental mode")
+        if error := configuration_error(body):
+            raise HTTPException(400, error)
         return app.state.store.save_with_credentials(body, credentials)
 
     @app.post("/api/v1/codex/install")
@@ -150,6 +154,54 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
         except Exception as exc:
             raise HTTPException(502, public_error(exc)) from None
         return {"ok": True}
+
+    @app.post("/api/v1/word-suggestions", response_model=WordSuggestionsResponse)
+    async def word_suggestions(body: TranslationRequest, request: Request):
+        settings = app.state.store.settings()
+        if not settings.enable_word_suggestions:
+            raise HTTPException(400, "Enable AI word suggestions in Settings first.")
+        if error := configuration_error(settings):
+            raise HTTPException(400, error)
+        provider = next(p for p in settings.providers if p.id == settings.word_suggestions_provider_id)
+
+        async def generate():
+            key = "" if provider.kind.endswith("_cli") else credentials.get(str(provider.id))
+            chunks, size = [], 0
+            async with asyncio.timeout(150):
+                async for chunk in app.state.providers.translate(
+                        provider, key, suggestion_prompt(settings), body.text, body.request_id):
+                    size += len(chunk)
+                    if size > 200_000:
+                        raise ValueError("Oversized suggestions response")
+                    chunks.append(chunk)
+            return parse_suggestions("".join(chunks), body.text, settings.word_suggestions_count)
+
+        async def disconnected():
+            # The validated body is already consumed. Wait directly for disconnect;
+            # is_disconnected() uses a cancellation scope that can swallow task cancellation.
+            while (await request.receive())["type"] != "http.disconnect":
+                pass
+
+        work = asyncio.create_task(generate())
+        disconnect = asyncio.create_task(disconnected())
+        try:
+            completed, _ = await asyncio.wait({work, disconnect}, return_when=asyncio.FIRST_COMPLETED)
+            if disconnect in completed:
+                raise HTTPException(499, "Request cancelled")
+            return WordSuggestionsResponse(request_id=body.request_id, provider_id=provider.id,
+                                           backend_name=provider.name, suggestions=await work)
+        except ValueError:
+            raise HTTPException(502, "AI returned invalid word suggestions. Check the prompt or try again.") from None
+        except TimeoutError:
+            raise HTTPException(504, "Word suggestions timed out. Try again.") from None
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, public_error(exc)) from None
+        finally:
+            work.cancel()
+            disconnect.cancel()
+            await asyncio.gather(work, disconnect, return_exceptions=True)
 
     @app.post("/api/v1/translate")
     async def translate(body: TranslationRequest):

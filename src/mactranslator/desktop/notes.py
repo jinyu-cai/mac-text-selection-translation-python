@@ -75,7 +75,8 @@ class NotesWindow:
             self.current = note["id"]
             self.content.textStorage().setAttributedString_(W.attributed_markdown(
                 f"### Source\n{note['source_text']}\n\n### {note.get('backend_name') or 'Translation'}\n"
-                f"{note.get('translated_text') or ''}"))
+                f"{note.get('translated_text') or ''}"
+                + (f"\n\n### Context\n{note['context']}" if note.get("context") else "")))
             self.editor.setString_(note["user_note"])
             self.editor.setEditable_(True)
         self.loading = False
@@ -126,7 +127,9 @@ class NotesWindow:
     def copy(self):
         note = next((n for n in self.notes if n["id"] == self.current), None)
         if note:
-            copy_text(note["source_text"] + "\n\n" + (note["translated_text"] or "") + "\n\n" + str(self.editor.string()))
+            copy_text(note["source_text"] + "\n\n" + (note["translated_text"] or "")
+                      + ("\n\n" + note["context"] if note.get("context") else "")
+                      + "\n\n" + str(self.editor.string()))
 
     def delete(self):
         if not self.current:

@@ -122,6 +122,7 @@ Translation requests have a 150-second timeout. If a CLI service fails, refresh 
 - **Screenshot translation:** press **⌥⇧O** or choose **Screenshot Translation…**, then drag a region. Press **Esc** to cancel. ScreenCaptureKit captures the image and Vision recognizes text locally; recognized text is then sent to enabled translation providers.
 - **Popup:** drag the header to move it or the bottom-right handle to resize it. Source and result cards have speech controls; results also have copy controls. Closing or dismissing the popup cancels pending translation work.
 - **Speech:** with no enabled TTS service, the app uses macOS speech. Multiple TTS services produce a selection menu. Speech services have a **Save & Preview Voice** button in settings.
+- **AI word suggestions:** open **Settings → AI Word Suggestions**, enable local notes in General, choose an enabled AI service, and turn on recommendations. Set 1–5 candidates (default 3), your learning preferences, and an independent suggestion prompt. Each translation adds one separate AI request using that service's model and credentials. Only the current source and preferences are used; note history is not sent. Suggestions appear independently of translation results. Click **Save word** to save the word or phrase, its contextual meaning, and its original sentence to local notes. A failed save can be retried; the existing whole-translation note button remains available. If the selected service is removed or disabled, choose another service or turn off suggestions before saving settings.
 - **Notes:** enable **Enable local notes** in General settings, then use the popup's note button. Annotations save after a short delay and flush when switching notes, closing, or quitting.
 - **Shortcuts:** record custom selection and OCR shortcuts in General settings. Avoid conflicts with another running translator, including the Swift edition.
 - **Launch at login:** configure it in the packaged app; macOS may require approval in Login Items settings.
@@ -185,6 +186,7 @@ All paths below use the `/api/v1` prefix and require the local bearer token. Req
 | `GET /settings`, `PUT /settings` | Read or replace preferences and provider settings |
 | `POST /translate` | Translate `{text, request_id?}` with SSE output |
 | `POST /providers/{id}/test` | Test a translation or dictionary service |
+| `POST /word-suggestions` | Recommend words from `{text, request_id?}` using configured AI; returns request ID, provider ID/name, and `{term, meaning, context}` candidates |
 | `POST /speech` | Generate speech from `{provider_id, text, language?}` |
 | `GET /notes`, `POST /notes` | List or create notes |
 | `GET /notes/{id}`, `PATCH /notes/{id}`, `DELETE /notes/{id}` | Read, annotate, or delete a note |

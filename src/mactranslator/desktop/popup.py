@@ -5,7 +5,7 @@ from PyObjCTools import AppHelper
 from mactranslator.policies import can_save, first_usable, fit_frame
 from . import widgets as W
 from Foundation import NSUserDefaults
-from .popup_cards import OutputCard, TopDownView, body_view, icon_button, spinner
+from .popup_cards import SuggestionCard, OutputCard, TopDownView, body_view, icon_button, spinner
 
 
 class FloatingPanel(A.NSPanel):
@@ -142,6 +142,10 @@ class TranslationPopup:
         self.loading = False
         self.render_pending = False
         self.saved = False
+        self.suggestions = []
+        self.suggestions_loading = False
+        self.suggestions_error = None
+        self.suggestions_backend = None
         self.notice_text = None
         self.cards = {}
         self.defaults = NSUserDefaults.standardUserDefaults()
@@ -209,6 +213,10 @@ class TranslationPopup:
     def show(self, text, request_id, point=None):
         self.request_id, self.source, self.saved = request_id, text, False
         self.results, self.dictionary, self.loading = [], {}, True
+        self.suggestions = []
+        self.suggestions_loading = bool(text and self.app.settings.enable_word_suggestions and self.app.settings.enable_notes)
+        self.suggestions_error = None
+        self.suggestions_backend = None
         self.notice_text = None
         point = point or A.NSEvent.mouseLocation()
         screen = screen_at(point).visibleFrame()
@@ -320,16 +328,33 @@ class TranslationPopup:
         if self.notice_text is None:
             entries.extend(("dictionary:" + key, "Microsoft Dictionary" if key != "error" else "Error",
                             value, False, value if key == "error" else None) for key, value in self.dictionary.items())
+        show_suggestions = (self.notice_text is None and self.app.settings.enable_word_suggestions
+                            and self.app.settings.enable_notes)
+        if show_suggestions:
+            status = "Guessing words…" if self.suggestions_loading else ""
+            if not self.suggestions_loading and not self.suggestions and not self.suggestions_error:
+                status = "No words to recommend."
+            if status or self.suggestions_error:
+                entries.append(("suggestions:status", "AI Word Suggestions", status,
+                                self.suggestions_loading, self.suggestions_error))
+            entries.extend((f"suggestions:{i}", "", "", False, None) for i in range(len(self.suggestions)))
         keep = {entry[0] for entry in entries}
         for key in list(self.cards):
             if key not in keep:
                 self.cards.pop(key).view.removeFromSuperview()
         for key, title, output, loading, error in entries:
             if key not in self.cards:
-                self.cards[key] = OutputCard(self.app)
+                if key.startswith("suggestions:") and key != "suggestions:status":
+                    index = int(key.split(":")[1])
+                    self.cards[key] = SuggestionCard(self.app, lambda index=index: self.save_suggestion(index))
+                else:
+                    self.cards[key] = OutputCard(self.app)
                 self.document.addSubview_(self.cards[key].view)
             card = self.cards[key]
-            card.update(title, output, loading, error)
+            if isinstance(card, SuggestionCard):
+                card.update_suggestion(self.suggestions[int(key.split(":")[1])])
+            else:
+                card.update(title, output, loading, error)
             card.view.setFrameOrigin_(A.NSMakePoint(0, y))
             y += card.layout(card_width) + 12
         content_height = y + 14
@@ -356,6 +381,46 @@ class TranslationPopup:
         if image:
             self.save_button.setImage_(image)
         self.save_button.setToolTip_("Saved" if self.saved else "Save Note")
+
+    def suggestions_done(self, response):
+        if response["request_id"] != self.request_id:
+            return
+        self.suggestions_loading = False
+        self.suggestions_error = None
+        self.suggestions_backend = response["backend_name"]
+        self.suggestions = [dict(item, save_state="idle", save_error=None) for item in response["suggestions"]]
+        self.render()
+
+    def suggestions_failed(self, request_id, error):
+        if request_id != self.request_id:
+            return
+        self.suggestions_loading = False
+        self.suggestions_error = str(error)
+        self.render()
+
+    def save_suggestion(self, index):
+        if not self.app.settings.enable_notes or not 0 <= index < len(self.suggestions):
+            return
+        item = self.suggestions[index]
+        if item["save_state"] != "idle":
+            return
+        request_id = self.request_id
+        item.update(save_state="saving", save_error=None)
+        self.render()
+
+        def done(_):
+            if self.request_id == request_id:
+                item["save_state"] = "saved"
+                self.render()
+
+        def failed(exc):
+            if self.request_id == request_id:
+                item.update(save_state="idle", save_error=str(exc))
+                self.render()
+
+        self.app.request("POST", "/notes", json={
+            "source_text": item["term"], "translated_text": item["meaning"],
+            "context": item["context"], "backend_name": self.suggestions_backend}, done=done, error=failed)
 
     def failed(self, request_id, error):
         if request_id != self.request_id:

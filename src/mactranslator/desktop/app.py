@@ -48,7 +48,7 @@ class TranslatorApp:
         self.quitting = False
         self.pending = set()
         self.targets = []
-        self.translation_task = self.capture_task = self.speech_task = None
+        self.translation_task = self.capture_task = self.speech_task = self.suggestions_task = None
         self.capture_generation = 0
         self.speech_generation = 0
         self.speech_preparing = False
@@ -271,6 +271,9 @@ class TranslatorApp:
                                      done=lambda text: self.translate(text) if generation == self.capture_generation else None)
 
     def cancel_translation(self):
+        if self.suggestions_task:
+            self.suggestions_task.cancel()
+            self.suggestions_task = None
         if self.translation_task:
             self.translation_task.cancel()
             self.translation_task = None
@@ -287,6 +290,11 @@ class TranslatorApp:
             self.runtime.stream({"request_id": request_id, "text": text},
                                 lambda event: AppHelper.callAfter(self.popup.event, event)),
             error=lambda exc: self.popup.failed(request_id, exc))
+        if self.settings.enable_word_suggestions and self.settings.enable_notes:
+            self.suggestions_task = self.request(
+                "POST", "/word-suggestions", json={"request_id": request_id, "text": text},
+                done=self.popup.suggestions_done,
+                error=lambda exc: self.popup.suggestions_failed(request_id, exc))
 
     def dismiss(self):
         if not self.ocr.busy:

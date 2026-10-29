@@ -166,15 +166,27 @@ def create_app(token: str, database: Path | None = None, credentials=None, trans
 
         async def generate():
             key = "" if provider.kind.endswith("_cli") else credentials.get(str(provider.id))
-            chunks, size = [], 0
+            prompt = suggestion_prompt(settings)
             async with asyncio.timeout(150):
-                async for chunk in app.state.providers.translate(
-                        provider, key, suggestion_prompt(settings), body.text, body.request_id):
-                    size += len(chunk)
-                    if size > 200_000:
-                        raise ValueError("Oversized suggestions response")
-                    chunks.append(chunk)
-            return parse_suggestions("".join(chunks), body.text, settings.word_suggestions_count)
+                for attempt in range(2):
+                    chunks, size = [], 0
+                    async for chunk in app.state.providers.translate(
+                            provider, key, prompt, body.text, body.request_id):
+                        size += len(chunk)
+                        if size > 200_000:
+                            raise ValueError("Oversized suggestions response")
+                        chunks.append(chunk)
+                    try:
+                        return parse_suggestions("".join(chunks), body.text, settings.word_suggestions_count)
+                    except ValueError:
+                        if attempt:
+                            raise
+                        prompt += (
+                            "\nThe previous response had an invalid format. Return only a valid JSON object "
+                            "with a suggestions array. Each item must contain exactly the nonempty string "
+                            "fields term, meaning, and context. Do not include Markdown, commentary, or "
+                            'trailing commas. Use {"suggestions": []} if no words are suitable.'
+                        )
 
         async def disconnected():
             # The validated body is already consumed. Wait directly for disconnect;

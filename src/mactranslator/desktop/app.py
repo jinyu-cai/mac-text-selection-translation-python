@@ -13,6 +13,7 @@ from mactranslator import APP_NAME
 from mactranslator.backend.storage import data_directory
 from mactranslator.contracts import Settings
 from mactranslator.policies import speech_text
+from mactranslator.word_suggestions import selected_word
 from .native import Hotkeys, SelectionWatcher, accessibility_allowed, alert, bind, capture_selection, on_main
 from .notes import NotesWindow
 from .ocr import OCRCapture
@@ -290,7 +291,7 @@ class TranslatorApp:
             self.runtime.stream({"request_id": request_id, "text": text},
                                 lambda event: AppHelper.callAfter(self.popup.event, event)),
             error=lambda exc: self.popup.failed(request_id, exc))
-        if self.settings.enable_word_suggestions and self.settings.enable_notes:
+        if self.settings.enable_word_suggestions and self.settings.enable_notes and not selected_word(text):
             self.suggestions_task = self.request(
                 "POST", "/word-suggestions", json={"request_id": request_id, "text": text},
                 done=self.popup.suggestions_done,

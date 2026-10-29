@@ -118,7 +118,10 @@ def test_suggestion_failure_does_not_change_translation():
     assert not popup.suggestions_loading and popup.suggestions_error == "Guess failed"
 
 
-def test_translation_starts_both_requests_and_cancels_both(monkeypatch):
+@pytest.mark.parametrize("text,expected", [("Planes take off here.", ["show", "translation", "suggestions"]),
+                                         ("  vocabulary  ", ["show", "translation"]),
+                                         ("don't", ["show", "translation"])])
+def test_translation_starts_both_requests_and_cancels_both(monkeypatch, text, expected):
     from mactranslator.desktop.app import TranslatorApp
     app = TranslatorApp.__new__(TranslatorApp)
     app.ready = True
@@ -149,8 +152,8 @@ def test_translation_starts_both_requests_and_cancels_both(monkeypatch):
         return future
 
     app.run, app.request = run, request
-    app.translate("Planes take off here.")
-    assert calls == ["show", "translation", "suggestions"]
+    app.translate(text)
+    assert calls == expected
     app.cancel_translation()
     assert all(f.cancelled() for f in futures)
     assert app.popup.request_id is None
@@ -170,3 +173,23 @@ def test_note_copy_includes_context_and_legacy_still_works(monkeypatch):
     del note["context"]
     notes.copy()
     assert copied[-1] == "take off\n\n起飞\n\nMy annotation"
+
+
+@pytest.mark.parametrize("success", [True, False])
+def test_selected_word_requires_click_and_saves_completed_translation(success):
+    popup, calls = suggestion_popup()
+    popup.suggestions = [dict(term="vocabulary", meaning="", context=None, selected=True,
+                              ready=False, save_state="idle", save_error=None)]
+    popup.results = [{"name": "Translator", "output": "词汇", "loading": False,
+                      "error": None if success else "failed"}]
+    popup.save_suggestion(0)
+    assert not calls
+    popup.finish_selected_word()
+    assert not calls  # Never save automatically.
+    popup.save_suggestion(0)
+    popup.save_suggestion(0)
+    assert len(calls) == 1
+    body = calls[0][1]["json"]
+    assert body["source_text"] == "vocabulary" and body["context"] is None
+    assert body["translated_text"] == ("词汇" if success else "")
+    assert body["backend_name"] == ("Translator" if success else None)

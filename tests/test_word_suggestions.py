@@ -34,11 +34,78 @@ def test_filter_limit_boundaries_unicode_and_fences():
     assert parse_suggestions('{"suggestions": []}', source, 3) == []
 
 
-@pytest.mark.parametrize("output", ["secret raw output", "[]", '{"suggestions": "bad"}',
-                                     '{"suggestions": [{"term": " "}]}'])
+@pytest.mark.parametrize("output", ["secret raw output", "null", "{}", '{"suggestions": "bad"}',
+                                     '{"suggestions": [{"term": " "}]}', '[null, 1, "word"]',
+                                     '{"suggestions": []', '{"suggestions": [}'])
 def test_invalid_output(output):
     with pytest.raises(ValueError):
         parse_suggestions(output, "source", 3)
+
+
+@pytest.mark.parametrize("prefix,suffix", [
+    ("Here are the words:\n", "\nThese are useful expressions."),
+    ("```JSON\n", "\n```"),
+    ("```\n", "\n```"),
+    ("Here are the words:\n```json\n", "\n```\nHope this helps!"),
+    ("\ufeff", ""),
+])
+def test_json_wrapped_in_commentary_or_fences(prefix, suffix):
+    output = prefix + json.dumps({"suggestions": [candidate()]}) + suffix
+    assert [item.model_dump() for item in parse_suggestions(output, "Planes take off here.", 3)] == [candidate()]
+
+
+@pytest.mark.parametrize("output", [
+    json.dumps([candidate()]),
+    json.dumps({"suggestions": [dict(candidate(), confidence=0.9)], "explanation": "Useful phrase"}),
+    '{"suggestions": [' + json.dumps(candidate())[:-1] + ',},],}',
+    'Here are the words:\n```json\n[' + json.dumps(candidate()) + ',]\n```',
+])
+def test_alternate_json_shapes_and_trailing_commas(output):
+    assert [item.model_dump() for item in parse_suggestions(output, "Planes take off here.", 3)] == [candidate()]
+
+
+@pytest.mark.parametrize("output", ['[]', '{"suggestions": []}', '```JSON\n[]\n```',
+                                     '{"suggestions": [], "explanation": "Nothing suitable"}'])
+def test_empty_suggestions(output):
+    assert parse_suggestions(output, "source", 3) == []
+
+
+@pytest.mark.parametrize("prefix", ['```JSON\n', 'Here is the "result:\n'])
+@pytest.mark.parametrize("trailing_commas", [False, True])
+def test_recovery_preserves_quoted_content(prefix, trailing_commas):
+    source = 'Planes take off here. A literal ",}" and ",]" and a \\ path.'
+    item = candidate(context=source)
+    item["meaning"] = '起飞; literal ,} and ,], ",}" and ",]", a backslash \\, and a newline\nremain unchanged.'
+    ending = ',],}' if trailing_commas else ']}'
+    output = prefix + '{"suggestions": [' + json.dumps(item, ensure_ascii=False) + ending + '\n```'
+    assert [parsed.model_dump() for parsed in parse_suggestions(output, source, 3)] == [item]
+
+
+@pytest.mark.parametrize("invalid", [None, "word", {}, {"term": "take off"},
+    dict(candidate(), term=" "), dict(candidate(), meaning=None), dict(candidate(), meaning=["起飞"]),
+    dict(candidate(), meaning=" "), dict(candidate(), context=123), dict(candidate(), context=""),
+    dict(candidate(), term="x" * 1001), dict(candidate(), meaning="x" * 10001)])
+def test_malformed_items_do_not_discard_valid_suggestions(invalid):
+    source = "Planes take off here."
+    output = json.dumps({"suggestions": [invalid, candidate(), candidate("Planes")]})
+    assert [item.term for item in parse_suggestions(output, source, 1)] == ["take off"]
+    with pytest.raises(ValueError):
+        parse_suggestions(json.dumps({"suggestions": [invalid]}), source, 3)
+
+
+def test_recovery_preserves_grounding_and_deduplication():
+    items = [None, candidate("absent"), candidate("art", "A partial plan."),
+             candidate("plan", "An invented plan."), candidate("plan"),
+             candidate(), candidate("TAKE OFF"), candidate("中文", "学习中文。")]
+    output = 'Here are the words:\n' + json.dumps(items)
+    assert [item.term for item in parse_suggestions(output, "Planes take off here. A partial plan. 学习中文。", 3)] == [
+        "take off", "中文"]
+    assert parse_suggestions(json.dumps([candidate("absent")]), "Planes take off here.", 3) == []
+
+
+def test_deeply_nested_json_is_a_format_error():
+    with pytest.raises(ValueError):
+        parse_suggestions("[" * 2000 + "]" * 2000, "source", 3)
 
 
 @pytest.mark.parametrize("kind,enabled", [("dictionary", True), ("translation", False), ("openai_tts", True)])
@@ -161,3 +228,14 @@ async def test_disconnect_cancels_suggestion_generation(tmp_path, credentials):
         finally:
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.parametrize("text,expected", [
+    (" word ", "word"), ("don't", "don't"), ("well-known", "well-known"),
+    ("café", "café"), ("cafe\u0301", "cafe\u0301"), ("词语", None),
+    ("这是一个句子", None), ("take off", None), ("Hello!", None),
+    ("", None), ("123", None), ("https://example.com", None), ("a\nb", None),
+])
+def test_single_selected_word(text, expected):
+    from mactranslator.word_suggestions import selected_word
+    assert selected_word(text) == expected

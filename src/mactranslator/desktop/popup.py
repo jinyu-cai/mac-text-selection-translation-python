@@ -3,6 +3,7 @@ import objc
 from PyObjCTools import AppHelper
 
 from mactranslator.policies import can_save, first_usable, fit_frame
+from mactranslator.word_suggestions import selected_word
 from . import widgets as W
 from Foundation import NSUserDefaults
 from .popup_cards import SuggestionCard, OutputCard, TopDownView, body_view, icon_button, spinner
@@ -217,6 +218,10 @@ class TranslationPopup:
         self.suggestions_loading = bool(text and self.app.settings.enable_word_suggestions and self.app.settings.enable_notes)
         self.suggestions_error = None
         self.suggestions_backend = None
+        if self.suggestions_loading and (word := selected_word(text)):
+            self.suggestions_loading = False
+            self.suggestions = [dict(term=word, meaning="", context=None, selected=True,
+                                     ready=False, save_state="idle", save_error=None)]
         self.notice_text = None
         point = point or A.NSEvent.mouseLocation()
         screen = screen_at(point).visibleFrame()
@@ -275,6 +280,7 @@ class TranslationPopup:
                             for p in event["providers"] if p["kind"] in ("translation", "gemini_cli", "antigravity_cli", "codex_cli")]
         elif kind == "done":
             self.loading = False
+            self.finish_selected_word()
         elif kind == "dictionary":
             data = event["data"]
             translations = data.get("translations", [])
@@ -382,6 +388,14 @@ class TranslationPopup:
             self.save_button.setImage_(image)
         self.save_button.setToolTip_("Saved" if self.saved else "Save Note")
 
+    def finish_selected_word(self):
+        if not self.suggestions or not self.suggestions[0].get("selected"):
+            return
+        item = self.suggestions[0]
+        first = first_usable([r for r in self.results if not r.get("loading")])
+        item.update(meaning=first["output"] if first else "", ready=True)
+        self.suggestions_backend = first["name"] if first else None
+
     def suggestions_done(self, response):
         if response["request_id"] != self.request_id:
             return
@@ -402,7 +416,7 @@ class TranslationPopup:
         if not self.app.settings.enable_notes or not 0 <= index < len(self.suggestions):
             return
         item = self.suggestions[index]
-        if item["save_state"] != "idle":
+        if item["save_state"] != "idle" or not item.get("ready", True):
             return
         request_id = self.request_id
         item.update(save_state="saving", save_error=None)
@@ -431,6 +445,7 @@ class TranslationPopup:
                 result["loading"], result["error"] = False, str(error)
         if not self.results:
             self.dictionary["error"] = str(error)
+        self.finish_selected_word()
         self.render()
 
     def save(self):

@@ -4,8 +4,6 @@ A native macOS menu bar translator built with Python, AppKit, and a local FastAP
 
 This is an independent Python application with its own settings, notes, and Keychain namespace. Features in this repository do not automatically apply to the separate Swift edition.
 
-> The Codex and Antigravity integrations are currently on the `codex/gemini-cli-provider` experimental branch. Check out that branch to use the features described below.
-
 ## Features
 
 - Translate selected text with **⌥D** or the floating **Aa** button.
@@ -25,7 +23,7 @@ The desktop starts and stops its local backend automatically. CLI translation pr
 Development requirements: **macOS 14 or later**, **Python 3.12**, and [uv](https://docs.astral.sh/uv/). Dependencies are pinned in `uv.lock`.
 
 ```sh
-git clone --branch codex/gemini-cli-provider https://github.com/jinyu-cai/mac-text-selection-translation-python.git
+git clone https://github.com/jinyu-cai/mac-text-selection-translation-python.git
 cd mac-text-selection-translation-python
 make setup
 make run
@@ -35,7 +33,8 @@ For an existing clone:
 
 ```sh
 git fetch origin
-git switch codex/gemini-cli-provider
+git switch main
+git pull --ff-only origin main
 make setup
 make run
 ```
@@ -214,7 +213,7 @@ make test
   --smoke-test /tmp/translator-bundle-check
 ```
 
-The latest implementation verification passed **106 automated tests**, packaged native smoke checks, and bundle signature verification. Tests cover provider behavior, settings and notes, credential redaction, cancellation, CLI authentication protocols, Codex effort parameters, model capabilities, and installer integrity checks. Live checks also verified account model discovery and short translations through installed Codex and Antigravity clients.
+The latest implementation verification passed **205 automated tests**, packaged native smoke checks, and bundle signature verification. Tests cover provider behavior, settings and notes, credential redaction, cancellation, CLI authentication protocols, Codex effort parameters, model capabilities, and installer integrity checks. Live checks also verified account model discovery and short translations through installed Codex and Antigravity clients.
 
 First-time browser sign-in flows are covered by simulated protocol tests; they have not been fully verified with fresh real accounts. Native smoke checks use synthetic content and temporarily exercise clipboard shortcuts. Their offscreen images may omit layer-backed controls, so they are not a substitute for interactive visual testing.
 

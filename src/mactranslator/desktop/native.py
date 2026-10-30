@@ -94,9 +94,10 @@ async def capture_selection(restore=True):
             break
         await asyncio.sleep(0.025)
     await asyncio.sleep(0.08)
+    # Rich-text/web editors can expose a nonempty but partial or shifted AX
+    # selection across formatting nodes. Prefer the editor's own Copy result;
+    # keep Accessibility text for applications that cannot copy the selection.
     text = await on_main(selected_text)
-    if text:
-        return text
     saved = await on_main(snapshot_clipboard) if restore else None
     # All pasteboard operations execute on the main thread. Poll data into a snapshot
     # consumed by the pure async policy, preserving its cancellation/restore behavior.
@@ -124,7 +125,7 @@ async def capture_selection(restore=True):
                 if saved:
                     pb.writeObjects_(saved)
         await on_main(restore_if_unchanged)
-    return result[0] if result else None
+    return result[0] if result and result[0] else text
 
 
 class Action(NSObject):

@@ -116,7 +116,7 @@ Translation requests have a 150-second timeout. If a CLI service fails, refresh 
 
 ## Controls and permissions
 
-- **Selection translation:** press **⌥D**, use the floating **Aa** button, or choose **Translate Selection**. Capture tries Accessibility first, then a Copy fallback with conditional clipboard restoration.
+- **Selection translation:** press **⌥D**, use the floating **Aa** button, or choose **Translate Selection**. Capture prefers the application's Copy result so paragraphs spanning rich-text formatting are preserved, and falls back to Accessibility text if Copy is unavailable. The previous clipboard is restored when enabled and no newer copy has replaced the captured result.
 - **Clipboard translation:** choose **Translate Clipboard** from the menu bar.
 - **Screenshot translation:** press **⌥⇧O** or choose **Screenshot Translation…**, then drag a region. Press **Esc** to cancel. ScreenCaptureKit captures the image and Vision recognizes text locally; recognized text is then sent to enabled translation providers.
 - **Popup:** drag the header to move it or the bottom-right handle to resize it. Source and result cards have speech controls; results also have copy controls. Closing or dismissing the popup cancels pending translation work.
@@ -213,7 +213,7 @@ make test
   --smoke-test /tmp/translator-bundle-check
 ```
 
-The latest implementation verification passed **205 automated tests**, packaged native smoke checks, and bundle signature verification. Tests cover provider behavior, settings and notes, credential redaction, cancellation, CLI authentication protocols, Codex effort parameters, model capabilities, and installer integrity checks. Live checks also verified account model discovery and short translations through installed Codex and Antigravity clients.
+The latest implementation verification passed **226 automated tests**, packaged native smoke checks, and bundle signature verification. Tests cover provider behavior, settings and notes, credential redaction, cancellation, CLI authentication protocols, Codex effort parameters, model capabilities, and installer integrity checks. Live checks also verified account model discovery and short translations through installed Codex and Antigravity clients.
 
 First-time browser sign-in flows are covered by simulated protocol tests; they have not been fully verified with fresh real accounts. Native smoke checks use synthetic content and temporarily exercise clipboard shortcuts. Their offscreen images may omit layer-backed controls, so they are not a substitute for interactive visual testing.
 

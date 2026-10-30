@@ -1043,15 +1043,15 @@ Do not put `asyncio.run(...)` inside each button handler or start another Uvicor
 
 The implementation is already in the `native.py` you added. Read its capture functions, `Hotkeys`, and `SelectionWatcher` together with the pure helpers in `policies.py`.
 
-### 15.1 Prefer reading the selection directly
+### 15.1 Keep the Accessibility selection as a fallback
 
 `selected_text()` creates an Accessibility system-wide element, asks for the focused UI element, then asks that element for `kAXSelectedTextAttribute`.
 
-Some applications expose this text; some do not. Permission is necessary but does not guarantee that every document or application supports the attribute. That is why a second capture method exists.
+Some applications expose this text; some do not. Rich-text and web editors can also return a nonempty but incomplete or shifted selection when it spans multiple formatting nodes. Keep this value as a fallback instead of assuming that any nonempty result contains the whole selection.
 
-### 15.2 Fall back to simulated Copy
+### 15.2 Prefer the application's Copy result
 
-The fallback records the existing clipboard items, sends Command+C, and waits for a new clipboard generation and its text. It preserves every available item type when making a snapshot, rather than assuming the old clipboard contains only a string.
+Capture records the existing clipboard items when restoration is enabled, sends Command+C, and waits for a new clipboard generation and its text. The application's own Copy operation handles selection across paragraphs, links, and formatting. Use its fresh text in preference to the Accessibility result, even when their lengths differ. If no fresh text arrives, fall back to the saved Accessibility text. The clipboard snapshot preserves every available item type, rather than assuming the old clipboard contains only a string.
 
 `NSPasteboard.changeCount()` identifies the clipboard generation. The algorithm polls because some applications declare clipboard types before supplying their actual data. A generation change alone does not guarantee that readable text has arrived.
 
